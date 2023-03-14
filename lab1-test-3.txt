@@ -1,0 +1,58 @@
+begin test!, testItem = 0  testcase = 2
+accept len = 32 packet
+accept len = 868 packet
+frame seq ======================1
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_SEND: seq=1
+*** send_frame: seq=1 flen=29
+send a message to main ui, len = 39  type = 2  subtype = 1
+*** flist_print: 1
+frame seq ======================2
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_SEND: seq=2
+*** send_frame: seq=2 flen=29
+send a message to main ui, len = 39  type = 2  subtype = 1
+*** flist_print: 1 2
+frame seq ======================3
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_SEND: seq=3
+*** send_frame: seq=3 flen=29
+send a message to main ui, len = 39  type = 2  subtype = 1
+*** flist_print: 1 2 3
+frame seq ======================4
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_SEND: seq=4
+*** send_frame: seq=4 flen=29
+send a message to main ui, len = 39  type = 2  subtype = 1
+*** flist_print: 1 2 3 4
+frame seq ======================5
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_SEND: seq=5
+*** flist_print: 1 2 3 4 5
+frame seq ======================6
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_SEND: seq=6
+*** flist_print: 1 2 3 4 5 6
+accept len = 24 packet
+send a message to main ui, len = 22  type = 2  subtype = 0
+receive a frame
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_RECEIVE: ack=2 (FRAME_KIND_ACK)
+*** send_frame: seq=5 flen=29
+send a message to main ui, len = 39  type = 2  subtype = 1
+*** send_frame: seq=6 flen=29
+send a message to main ui, len = 39  type = 2  subtype = 1
+*** flist_print: 3 4 5 6
+accept len = 24 packet
+send a message to main ui, len = 22  type = 2  subtype = 0
+receive a frame
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_RECEIVE: ack=3 (FRAME_KIND_NAK)
+*** send_frame: seq=3 flen=29
+send a message to main ui, len = 39  type = 2  subtype = 1
+*** flist_print: 3 4 5 6
+accept len = 24 packet
+send a message to main ui, len = 22  type = 2  subtype = 0
+receive a frame
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_RECEIVE: ack=3 (FRAME_KIND_ACK)
+*** flist_print: 4 5 6
+accept len = 30 packet
+send a message to main ui, len = 22  type = 2  subtype = 0
+receive a frame
+*** stud_slide_window_choice_frame_resend: MSG_TYPE_RECEIVE: ack=6 (FRAME_KIND_ACK)
+*** flist_print: (empty)
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+Test over!
