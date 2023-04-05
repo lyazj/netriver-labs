@@ -1,0 +1,70 @@
+begin test!, testItem = 1  testcase = 0
+accept len = 32 packet
+accept len = 166 packet
+*** stud_ip_Upsend: vsn=4 ihl=5 ttl=18 dst=0xa00fff1
+*** send_packet: vsn=4 ihl=5 ttl=18 dst=0xa00fff1
+send a message to main ui, len = 53  type = 2  subtype = 1
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 1  testcase = 1
+accept len = 32 packet
+accept len = 166 packet
+accept len = 38 packet
+send a message to main ui, len = 36  type = 2  subtype = 0
+*** stud_ip_recv: vsn=4 ihl=5 ttl=64 dst=0xa000003
+*** handup_packet: vsn=4 ihl=5 ttl=64 dst=0xa000003
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 1  testcase = 2
+accept len = 32 packet
+accept len = 166 packet
+accept len = 38 packet
+send a message to main ui, len = 36  type = 2  subtype = 0
+*** stud_ip_recv: vsn=4 ihl=5 ttl=64 dst=0xa000003
+*** discard_packet: vsn=4 ihl=5 ttl=64 dst=0xa000003 why=1
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 1  testcase = 3
+accept len = 32 packet
+accept len = 166 packet
+accept len = 38 packet
+send a message to main ui, len = 36  type = 2  subtype = 0
+*** stud_ip_recv: vsn=4 ihl=5 ttl=0 dst=0xa000003
+*** discard_packet: vsn=4 ihl=5 ttl=0 dst=0xa000003 why=2
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 1  testcase = 4
+accept len = 32 packet
+accept len = 166 packet
+accept len = 38 packet
+send a message to main ui, len = 36  type = 2  subtype = 0
+*** stud_ip_recv: vsn=0 ihl=5 ttl=64 dst=0xa000003
+*** discard_packet: vsn=0 ihl=5 ttl=64 dst=0xa000003 why=3
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 1  testcase = 5
+accept len = 32 packet
+accept len = 166 packet
+accept len = 38 packet
+send a message to main ui, len = 36  type = 2  subtype = 0
+*** stud_ip_recv: vsn=4 ihl=0 ttl=64 dst=0xa000003
+*** discard_packet: vsn=4 ihl=0 ttl=64 dst=0xa000003 why=4
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 1  testcase = 6
+accept len = 32 packet
+accept len = 166 packet
+accept len = 38 packet
+send a message to main ui, len = 36  type = 2  subtype = 0
+*** stud_ip_recv: vsn=4 ihl=5 ttl=64 dst=0xc0a8de01
+*** discard_packet: vsn=4 ihl=5 ttl=64 dst=0xc0a8de01 why=5
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+Test over!

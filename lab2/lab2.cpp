@@ -5,35 +5,6 @@
  * 创建日期：2023年4月4日
  */
 
-/*
- * 系统函数：丢弃分组
- *
- * pBuffer: 指向被丢弃分组的指针
- * type: 分组被丢弃的原因，为 STUD_IP_TEST_*
- */
-extern void ip_DiscardPkt(char *pBuffer, int type);
-
-/*
- * 系统函数：发送分组
- *
- * pBuffer: 指向待发送分组头部的指针
- * length: 待发送分组的长度
- */
-extern void ip_SendtoLower(char *pBuffer, int length);
-
-/*
- * 系统函数：上交分组
- *
- * pBuffer: 指向要上交的上层协议报文头部的指针
- * length: 上交报文长度
- */
-extern void ip_SendtoUp(char *pBuffer, int length);
-
-/*
- * 系统函数：获取本机 IPv4 地址
- */
-extern unsigned getIpv4Address(void);
-
 #undef NDEBUG  /* activate assert */
 
 #include <assert.h>
@@ -43,19 +14,20 @@ extern unsigned getIpv4Address(void);
 
 #ifdef __unix__  /* 我的笔记本环境 */
 
+#include <arpa/inet.h>
 #include <stdint.h>
 
 /*
  * 固定大小的整形
  */
-#define UINT8  uint8_t
-#define UINT16 uint16_t
-#define UINT32 uint32_t
-#define UINT64 uint64_t
-#define INT8   int8_t
-#define INT16  int16_t
-#define INT32  int32_t
-#define INT64  int64_t
+#define UINT8   uint8_t
+#define UINT16  uint16_t
+#define UINT32  uint32_t
+#define UINT64  uint64_t
+#define INT8    int8_t
+#define INT16   int16_t
+#define INT32   int32_t
+#define INT64   int64_t
 
 /*
  * 分组被丢弃的原因
@@ -73,97 +45,93 @@ extern unsigned getIpv4Address(void);
 #endif  /* __unix__ */
 
 /*
- * 帮助函数：获取本机字节序
+ * 系统函数：丢弃分组
  *
- * 退回值
- *     0: 大端序，与网络一致
- *     1: 小端序，与网络不一致
+ * pBuffer: 指向被丢弃分组头部的指针
+ * type:    分组被丢弃的原因，为 STUD_IP_TEST_*
  */
-static UINT8 endian(void)
-{
-  UINT16 prob = 1;
-  return *(UINT8 *)&prob;
-}
+extern void ip_DiscardPkt(char *pBuffer, int type);
 
 /*
- * 帮助函数：改变字节序
+ * 系统函数：发送分组
+ *
+ * pBuffer: 指向待发送分组头部的指针
+ * length:  待发送分组的长度
  */
-static UINT32 bswap32(UINT32 u32)
-{
-  UINT32 u0 = (u32 >> 24) & 0xff;
-  UINT32 u1 = (u32 >> 16) & 0xff;
-  UINT32 u2 = (u32 >>  8) & 0xff;
-  UINT32 u3 = (u32 >>  0) & 0xff;
-  return (u0 << 0) | (u1 << 8) | (u2 << 16) | (u3 << 24);
-}
-static UINT16 bswap16(UINT16 u16)
-{
-  UINT16 u0 = (u16 >> 8) & 0xff;
-  UINT16 u1 = (u16 >> 0) & 0xff;
-  return (u0 << 0) | (u1 << 8);
-}
+extern void ip_SendtoLower(char *pBuffer, int length);
 
 /*
- * 帮助函数：网络字节序 -> 主机字节序
+ * 系统函数：上交分组
+ *
+ * pBuffer: 指向要上交的上层协议报文头部的指针
+ * length:  上交报文长度
  */
-static UINT32 ntoh32(UINT32 u32)
-{
-  if(endian()) {  /* 应从大到小 */
-    return bswap32(u32);
-  }
-  return u32;
-}
-static UINT16 ntoh16(UINT16 u16)
-{
-  if(endian()) {  /* 应从大到小 */
-    return bswap16(u16);
-  }
-  return u16;
-}
+extern void ip_SendtoUp(char *pBuffer, int length);
 
 /*
- * 帮助函数：主机字节序 -> 网络字节序
+ * 系统函数：获取本机 IPv4 地址
  */
-static UINT32 hton32(UINT32 u32)
-{
-  return ntoh32(u32);
-}
-static UINT16 hton16(UINT16 u16)
-{
-  return ntoh16(u16);
-}
+extern unsigned getIpv4Address(void);
+
+/*
+ * 字节序转换
+ */
+#define ntoh16  ntohs
+#define ntoh32  ntohl
+#define hton16  htons
+#define hton32  htonl
 
 /*
  * IPv4 协议头
+ *
+ * Reference: https://www.rfc-editor.org/rfc/rfc791.txt
+ * 
+ *     0                   1                   2                   3   
+ *     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 
+ *    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ *    |Version|  IHL  |Type of Service|          Total Length         |
+ *    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ *    |         Identification        |Flags|      Fragment Offset    |
+ *    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ *    |  Time to Live |    Protocol   |         Header Checksum       |
+ *    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ *    |                       Source Address                          |
+ *    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ *    |                    Destination Address                        |
+ *    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ *    |                    Options                    |    Padding    |
+ *    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * 
  */
 typedef struct ipv4_header {
-  UINT8 version : 4;            /* 当前使用的 IP 协议版本 */
-  UINT8 ip_header_length : 4;   /* IP 协议头长度，至少为 5（20 字节） */
-  UINT8 type_of_service : 6;    /* 期望的服务质量 */
-  UINT8 hole_0 : 2;             /* 填充空洞 0 */
-  UINT16 total_length;          /* 包括头部的分组全长 */
-  UINT16 identification;        /* 数据报分片标识 */
-  UINT8 hole_1 : 1;             /* 填充空洞 1 */
-  UINT8 df : 1;                 /* 是否为最后分片 */
-  UINT8 mf : 1;                 /* 是否分片 */
-  UINT16 fragment_offset : 13;  /* 与源数据报的起始端相关的分片数据位置 */
-  UINT8 time_to_live;           /* 剩余可转发跳数 */
-  UINT8 protocol;               /* 上层协议 */
-  UINT16 header_checksum;       /* IP 协议头校验和 */
-  UINT32 source_address;        /* 源 IPv4 地址 */
-  UINT32 destination_address;   /* 目标 IPv4 地址 */
-  char options[0];              /* 变长的各种选项 */
+  /*  0 */  UINT8 internet_header_length : 4;  /* IP 协议头长度（四字节） */
+            UINT8 version : 4;                 /* IP 协议版本 */
+  /*  1 */  UINT8 type_of_service;             /* 期望的服务质量 */
+  /*  2 */  UINT16 total_length;               /* 包括头部的分组全长（字节） */
+  /*  4 */  UINT16 identification;             /* 数据报分片标识 */
+  /*  6 */  UINT16 fragment_offset : 13;       /* 分片偏移（字节） */
+            UINT16 more_fragments : 1;         /* 不是最后分片 */
+            UINT16 dont_fragment : 1;          /* 禁用分片 */
+            UINT16 reserved_flag : 1;          /* 保留标志，必须为零 */
+  /*  8 */  UINT8 time_to_live;                /* 剩余可转发跳数 */
+  /*  9 */  UINT8 protocol;                    /* 上层协议 */
+  /* 10 */  UINT16 header_checksum;            /* IP 协议头校验和 */
+  /* 12 */  UINT32 source_address;             /* 源 IPv4 地址 */
+  /* 16 */  UINT32 destination_address;        /* 目标 IPv4 地址 */
+  /* 20 */  char options[0];                   /* 变长选项 */
 } ipv4_header;
 
 /*
  * 包装函数：丢弃分组
  *
  * header: 指向被丢弃分组头部的指针
- * why: 分组被丢弃的原因，为 STUD_IP_TEST_*
+ * why:    分组被丢弃的原因，为 STUD_IP_TEST_*
  */
 static void discard_packet(ipv4_header *header, int why)
 {
-  printf("*** %s: id=%d\n", __func__, ntoh16(header->identification));
+  printf("*** %s: vsn=%hhu ihl=%hhu ttl=%hhu dst=%#x why=%d\n", __func__,
+      header->version, header->internet_header_length,
+      header->time_to_live, ntoh32(header->destination_address), why);
   ip_DiscardPkt((char *)header, why);
 }
 
@@ -174,7 +142,9 @@ static void discard_packet(ipv4_header *header, int why)
  */
 static void send_packet(ipv4_header *header)
 {
-  printf("*** %s: id=%d\n", __func__, ntoh16(header->identification));
+  printf("*** %s: vsn=%hhu ihl=%hhu ttl=%hhu dst=%#x\n", __func__,
+      header->version, header->internet_header_length,
+      header->time_to_live, ntoh32(header->destination_address));
   ip_SendtoLower((char *)header, ntoh16(header->total_length));
 }
 
@@ -188,10 +158,12 @@ static void handup_packet(ipv4_header *header)
   int header_length, data_length;
 
   /* 分别获取头部和数据报文长度 */
-  header_length = header->ip_header_length << 2;
+  header_length = header->internet_header_length << 2;
   data_length = ntoh16(header->total_length) - header_length;
 
-  printf("*** %s: id=%d\n", __func__, ntoh16(header->identification));
+  printf("*** %s: vsn=%hhu ihl=%hhu ttl=%hhu dst=%#x\n", __func__,
+      header->version, header->internet_header_length,
+      header->time_to_live, ntoh32(header->destination_address));
   ip_SendtoUp((char *)header + header_length, data_length);
 }
 
@@ -202,7 +174,7 @@ static void handup_packet(ipv4_header *header)
  */
 static int is_broadcast(UINT32 addr)
 {
-  return addr == (UINT32)-1;  /* FIXME */
+  return addr == (UINT32)-1;  /* XXX */
 }
 
 /*
@@ -215,8 +187,8 @@ static int is_broadcast(UINT32 addr)
  */
 static int validate_packet_destination(const ipv4_header *header)
 {
-  return header->destination_address == getIpv4Address()
-    || is_broadcast(header->destination_address);
+  UINT32 destination = ntoh32(header->destination_address);
+  return destination == getIpv4Address() || is_broadcast(destination);
 }
 
 /*
@@ -270,7 +242,7 @@ static int validate_packet_header_checksum(const ipv4_header *header)
  * 接收来自下层的 IPv4 分组
  *
  * pBuffer: 指向接收缓冲区的指针，指向 IPv4 分组头部
- * length: IPv4 分组长度
+ * length:  IPv4 分组长度
  * 退回值
  *     0: 接收成功，IP 分组被交给上层
  *     1: 接收失败，IP 分组被丢弃
@@ -283,6 +255,10 @@ int stud_ip_recv(char *pBuffer, UINT16 length)
   assert(length >= sizeof(ipv4_header));
   header = (ipv4_header *)pBuffer;
 
+  printf("*** %s: vsn=%hhu ihl=%hhu ttl=%hhu dst=%#x\n", __func__,
+      header->version, header->internet_header_length,
+      header->time_to_live, ntoh32(header->destination_address));
+
   /* 检验 IP 版本号 */
   if(header->version != 4) {
     discard_packet(header, STUD_IP_TEST_VERSION_ERROR);
@@ -290,7 +266,7 @@ int stud_ip_recv(char *pBuffer, UINT16 length)
   }
 
   /* 检验头部长度 */
-  if((header->ip_header_length << 2) < (int)sizeof(ipv4_header)) {
+  if((header->internet_header_length << 2) < (int)sizeof(ipv4_header)) {
     discard_packet(header, STUD_IP_TEST_HEADLEN_ERROR);
     return 1;
   }
@@ -321,12 +297,12 @@ int stud_ip_recv(char *pBuffer, UINT16 length)
 /*
  * 发送来自上层的数据报文
  *
- * pBuffer: 指向发送缓冲区的指针，指向 IPv4 上层协议数据头部
- * length: IPv4 上层协议数据长度
- * srcAddr: 源 IPv4 地址
- * dstAddr: 目的 IPv4 地址
+ * pBuffer:  指向发送缓冲区的指针，指向 IPv4 上层协议数据头部
+ * length:   IPv4 上层协议数据长度
+ * srcAddr:  源 IPv4 地址
+ * dstAddr:  目的 IPv4 地址
  * protocol: IPv4 上层协议号
- * ttl: 生存时间（Time To Live）
+ * ttl:      生存时间（Time To Live）
  * 退回值
  *     0: 发送成功
  *     1: 发送失败
@@ -342,20 +318,23 @@ int stud_ip_Upsend(char *pBuffer, UINT16 length,
 
   /* 填写分组头 */
   header->version = 4;
-  header->ip_header_length = 5;
-  header->type_of_service = 0;  /* FIXME */
-  header->hole_0 = 0;
+  header->internet_header_length = 5;
+  header->type_of_service = 0;  /* 默认 */
   header->total_length = hton16(length + sizeof *header);
   header->identification = hton16(rand());
-  header->hole_1 = 0;
-  header->df = 0;
-  header->mf = 0;
+  header->reserved_flag = 0;
+  header->dont_fragment = 1;
+  header->more_fragments = 0;
   header->fragment_offset = 0;
   header->time_to_live = ttl;
   header->protocol = protocol;
-  header->source_address = srcAddr;
-  header->destination_address = dstAddr;
+  header->source_address = hton32(srcAddr);
+  header->destination_address = hton32(dstAddr);
   write_packet_header_checksum(header);
+
+  printf("*** %s: vsn=%hhu ihl=%hhu ttl=%hhu dst=%#x\n", __func__,
+      header->version, header->internet_header_length,
+      header->time_to_live, ntoh32(header->destination_address));
 
   /* 拷贝 IPv4 分组数据 */
   memcpy(header->options, pBuffer, length);
@@ -378,7 +357,6 @@ int main(void)
   ipv4_header header;
   printf("Hello from %s()!\n", __func__);
   assert(sizeof header == 20);
-  assert(endian() == 1);
   assert(ntoh32(0x01000000) == 1);
   assert(hton32(0x01000000) == 1);
   assert(ntoh16(0x0100) == 1);
