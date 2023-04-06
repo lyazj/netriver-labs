@@ -2,7 +2,7 @@
  * IPv4 协议收发实验
  *
  * 作者：高乐耘 <seeson@pku.edu.cn>
- * 创建日期：2023年4月4日
+ * 创建日期：2023年4月6日
  */
 
 #undef NDEBUG  /* activate assert */
@@ -12,6 +12,12 @@
 #include <string.h>
 #include <stdlib.h>
 
+/*
+ * Endian prober.
+ *
+ * Author: lyazj <seeson@pku.edu.cn>
+ * Last Update: Apr 6 2023
+ */
 #ifdef WIN32
 # include <winsock.h>  // compile and link with: -lws2_32
 #else  /* WIN32 */
@@ -28,6 +34,12 @@
 # define BYTE_ORDER  (htonl(1) == 1 ? BIG_ENDIAN : LITTLE_ENDIAN)
 #endif  /* BYTE_ORDER */
 
+/*
+ * Integer types in Internet byte order.
+ *
+ * Author: lyazj <seeson@pku.edu.cn>
+ * Last Update: Apr 6 2023
+ */
 #include <stdint.h>
 
 // Converter between T and nint<T>.
@@ -112,6 +124,12 @@ public:
   }
 };
 
+/*
+ * Structures relevant to IPv4 packet.
+ *
+ * Author: lyazj <seeson@pku.edu.cn>
+ * Last Update: Apr 6 2023
+ */
 class ipv4_header {
 private:
   char _header_begin[0];
@@ -127,36 +145,81 @@ private:
   nint32 _dst;  // destination address
   char _options_and_padding[0];
 
-  // These attributes cannot be directly changed by user.
-  void version(uint8_t u) { _version_and_ihl = (u << 4) | ihl(); }
-  void ihl(uint8_t u) { _version_and_ihl = (version() << 4) | u; }
-  void total_length(uint16_t u) { _total_length = u; }
+  class hcs_updater_16 {  // CAUTION: overlap avoidance
+  private:
+    uint16_t *hcs, *addr, value;
 
-  uint16_t get_hcs() const {  // 16-bit sum of the one's complement
-    nint16 *p = (nint16 *)_header_begin;
-    nint16 *q = p + (header_length() >> 1);
+  public:
+    hcs_updater_16(nint16 &h, nint8 &t) {  // for nint8
+      hcs = (uint16_t *)&h;
+      addr = (uint16_t *)((uintptr_t)&t & -2);
+      value = *addr;
+    }
+
+    hcs_updater_16(nint16 &h, nint16 &t) {  // for nint16
+      hcs = (uint16_t *)&h;
+      addr = (uint16_t *)&t;
+      value = *addr;
+    }
+
+    ~hcs_updater_16() {
+      uint32_t s = (uint16_t)~*hcs;
+      s += *addr - value;
+      s = (s & 0xffff) + (s >> 16);
+      *hcs = ~s;
+    }
+  };
+
+  class hcs_updater_32 {  // CAUTION: overlap avoidance
+  private:
+    hcs_updater_16 updater[2];
+
+  public:
+    hcs_updater_32(nint16 &h, nint32 &t) :
+      updater { {h, ((nint16 *)&t)[0]}, {h, ((nint16 *)&t)[1]} }
+    {  }
+  };
+
+  // These attributes cannot be directly changed by user.
+  void version(uint8_t u) {
+    hcs_updater_16 updater(_hcs, _version_and_ihl);
+    _version_and_ihl = (u << 4) | ihl();
+  }
+  void ihl(uint8_t u) {
+    hcs_updater_16 updater(_hcs, _version_and_ihl);
+    _version_and_ihl = (version() << 4) | u;
+  }
+  void total_length(uint16_t u) {
+    hcs_updater_16 updater(_hcs, _total_length);
+    _total_length = u;
+  }
+
+  nint16 get_hcs() const {  // 16-bit sum of the one's complement
+    // NOTE: The 16-bit one's complement sum is BO-insensitive.
+    uint16_t *p = (uint16_t *)_header_begin;
+    uint16_t *q = p + (header_length() >> 1);
     uint32_t s = 0;
     while(p != q) s += *p++;
     s = (s & 0xffff) + (s >> 16);
     s = (s & 0xffff) + (s >> 16);
-    return ~s;
+    s = ~s;
+    return *(nint16 *)&s;
   }
 
 public:
   // Initialize each field.
   ipv4_header() {
-    _version_and_ihl = 0;
-    version(4);
-    header_length(20);  // minimal length
+    _version_and_ihl = 0x45;  // IPv4, 20 Bytes
     _tos = 0;  // default service type
-    data_length(0);
-    _identification = 0;  // no fragmentation
-    _fragment_flags_and_offset = 0x4000;  // disable fragmentation
-    ttl(64);  // recommended
-    protocol(0);
+    _total_length = 20;  // no data yet
+    _identification = 0;  // not used
+    _fragment_flags_and_offset = 0x4000;  // disabled
+    _ttl = 64;  // recommended
+    _protocol = 0;
     _hcs = 0;
-    src(0);
-    dst(0);
+    _src = 0;
+    _dst = 0;
+    _hcs = get_hcs();
   }
 
   // These attributes cannot be directly changed.
@@ -172,25 +235,25 @@ public:
   void data_length(uint16_t u) { total_length(u + header_length()); }
 
   uint8_t ttl() const { return _ttl; }
-  void ttl(uint8_t u) { _ttl = u; }
+  void ttl(uint8_t u) { hcs_updater_16 updater(_hcs, _ttl); _ttl = u; }
 
   uint8_t protocol() const { return _protocol; }
-  void protocol(uint8_t u) { _protocol = u; }
+  void protocol(uint8_t u) { hcs_updater_16 updater(_hcs, _protocol); _protocol = u; }
 
   uint32_t src() const { return _src; }
-  void src(uint32_t u) { _src = u; }
+  void src(uint32_t u) { hcs_updater_32 updater(_hcs, _src); _src = u; }
 
   uint32_t dst() const { return _dst; }
-  void dst(uint32_t u) { _dst = u; }
+  void dst(uint32_t u) { hcs_updater_32 updater(_hcs, _dst); _dst = u; }
 
-  // IMPORTANT: hcs is always manually updated.
-  void write_hcs() {
+  // Must be called after change ihl/options.
+  void update_hcs() {
     _hcs = 0;
     _hcs = get_hcs();
   }
-  bool validate_hcs() const { return get_hcs() == 0; }
 
-  // Other field validations.
+  // Field validations.
+  bool validate_hcs() const { return get_hcs() == 0; }
   bool validate_version() const { return version() == 4; }
   bool validate_ihl() const { return ihl() >= 5; }
   bool validate_total_length() const { return total_length() >= header_length(); }
@@ -405,7 +468,6 @@ int stud_ip_Upsend(char *pBuffer, UINT16 length,
   header->protocol(protocol);
   header->src(srcAddr);
   header->dst(dstAddr);
-  header->write_hcs();
 
   printf("*** %s: vsn=%hhu ihl=%hhu ttl=%hhu dst=%#x\n", __func__,
       header->version(), header->ihl(), header->ttl(), header->dst());
