@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <new>
 
 /*
  * Endian prober.
@@ -172,11 +173,11 @@ private:
 
   class hcs_updater_32 {  // CAUTION: overlap avoidance
   private:
-    hcs_updater_16 updater[2];
+    hcs_updater_16 high, low;
 
   public:
     hcs_updater_32(nint16 &h, nint32 &t) :
-      updater { {h, ((nint16 *)&t)[0]}, {h, ((nint16 *)&t)[1]} }
+      high(h, ((nint16 *)&t)[0]), low(h, ((nint16 *)&t)[1])
     {  }
   };
 
@@ -457,10 +458,10 @@ int stud_ip_recv(char *pBuffer, UINT16 length)
 int stud_ip_Upsend(char *pBuffer, UINT16 length,
     UINT32 srcAddr, UINT32 dstAddr, UINT8 protocol, UINT8 ttl)
 {
-  ipv4_header *header;
-
   /* 分配 IPv4 分组缓冲区 */
-  header = new ipv4_header;
+  ipv4_header *header = (ipv4_header *)malloc(sizeof *header + length);
+  if(header == NULL) return 1;
+  new(header) ipv4_header;
 
   /* 填写分组头 */
   header->data_length(length);
@@ -479,7 +480,8 @@ int stud_ip_Upsend(char *pBuffer, UINT16 length,
   send_packet(header);
 
   /* 释放分配的资源并退回成功码 */
-  delete header;
+  header->~ipv4_header();
+  free(header);
   return 0;
 }
 
