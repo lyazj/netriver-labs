@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <new>
+// #include <stdexcept>
 
 /*
  * Endian prober.
@@ -271,16 +272,23 @@ public:
   char *data() { return _header_begin + header_length(); }
 };
 
+// struct no_routing : std::runtime_error {
+//   no_routing() : std::runtime_error("no matched routing rule") { }
+// };
+struct no_routing { };  /* for faster compilation... */
+
 // Routing table implemented by Trie.
 class routing_table {
 private:
   routing_table *child[2];  // child table address, NULL if not exists
-  uint32_t nhop;  // next-hop address, 0 being an invalid address
+  uint32_t valid;  // if 0, nhop not set
+  uint32_t nhop;  // next-hop address
 
 public:
   // Create a node mapped to address 0.0.0.0.
   routing_table() {
     memset(child, 0, sizeof child);
+    valid = 0;
     nhop = 0;
   }
 
@@ -290,6 +298,7 @@ public:
   //     value: next-hop address
   void set(uint32_t addr, uint32_t mlen, uint32_t value) {
     if(mlen == 0) {  // no more indexing bits
+      valid = 1;
       nhop = value;
       return;
     }
@@ -303,14 +312,20 @@ public:
   //     addr: destination address
   //     mlen: mask length
   //     @ret: next-hop address
+  //     @thr: no_routing if no matching rule
   uint32_t get(uint32_t addr, uint32_t mlen = 32) const {
     if(mlen == 0) {  // no more indexing bits
+      if(!valid) throw no_routing();
       return nhop;
     }
     uint32_t hbit = addr >> 31;
     // If the child node doesn't exist, here is the longest match.
-    if(child[hbit] == NULL) return nhop;
-    return child[hbit]->get(addr << 1, mlen - 1);
+    if(child[hbit] == NULL) return get(0, 0);
+    try {
+      return child[hbit]->get(addr << 1, mlen - 1);
+    } catch(const no_routing &) {
+      return get(0, 0);
+    }
   }
 };
 
@@ -385,7 +400,6 @@ extern UINT32 getIpv4Address();
  * 全局路由表
  */
 static routing_table routing;
-static bool routing_default;
 
 /*
  * 接口函数：初始化路由表
@@ -400,11 +414,10 @@ void stud_Route_Init()
  *
  * proute: 具体规则
  */
-void stud_route_add(const stud_route_msg *msg)
+void stud_route_add(stud_route_msg *msg)
 {
   printf("*** %s: %#x/%u -> %#x",
       __func__, msg->dest, msg->masklen, msg->nexthop);
-  if(msg->masklen == 0) routing_default = true;
   routing.set(msg->dest, msg->masklen, msg->nexthop);
 }
 
@@ -429,8 +442,9 @@ int stud_fwd_deal(char *buf, int len)
   }
 
   /* 如无路由规则则丢弃 */
-  nhop = routing.get(addr);
-  if(nhop == 0 && !routing_default) {
+  try {
+    nhop = routing.get(addr);
+  } catch(const no_routing &) {
     printf("*** %s: %d", "fwd_DiscardPkt", STUD_FORWARD_TEST_NOROUTE);
     fwd_DiscardPkt(buf, STUD_FORWARD_TEST_NOROUTE);
     return 1;
@@ -462,10 +476,10 @@ int main(void)
   printf("Hello from %s()!\n", __func__);
   assert(sizeof header == 20);
   routing_table table;
-  assert(table.get(0xc0a80001) == 0);
-  assert(table.get(0x7f000001) == 0);
+  try { table.get(0xc0a80001); abort(); } catch(const no_routing &) { }
+  try { table.get(0x7f000001); abort(); } catch(const no_routing &) { }
   table.set(0x7f000000, 8, 0x7f000001);
-  assert(table.get(0xc0a80001) == 0);
+  try { table.get(0xc0a80001); abort(); } catch(const no_routing &) { }
   assert(table.get(0x7f000001) == 0x7f000001);
   table.set(0xc0a80000, 24, 0xc0a80101);
   assert(table.get(0xc0a80001) == 0xc0a80101);
@@ -476,6 +490,9 @@ int main(void)
   table.set(0xc0a80001, 32, 0);
   assert(table.get(0xc0a80001) == 0);
   assert(table.get(0x7f000001) == 0x7f000001);
+  try { table.get(0xc0a80101); abort(); } catch(const no_routing &) { }
+  table.set(0xc0a80000, 16, 0);
+  assert(table.get(0xc0a80101) == 0);
   return 0;
 }
 
