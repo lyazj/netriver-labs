@@ -285,7 +285,7 @@ private:
   uint32_t nhop;  // next-hop address
 
 public:
-  // Create a node mapped to address 0.0.0.0.
+  // Create an inactivated node.
   routing_table() {
     memset(child, 0, sizeof child);
     valid = 0;
@@ -297,15 +297,17 @@ public:
   //     mlen: mask length
   //     value: next-hop address
   void set(uint32_t addr, uint32_t mlen, uint32_t value) {
-    if(mlen == 0) {  // no more indexing bits
-      valid = 1;
-      nhop = value;
-      return;
+    routing_table *routing = this;
+    while(mlen--) {
+      uint32_t hbit = addr >> 31;
+      addr <<= 1;
+      if(routing->child[hbit] == NULL) {
+        routing->child[hbit] = new routing_table;
+      }
+      routing = routing->child[hbit];
     }
-    uint32_t hbit = addr >> 31;
-    // If the child node doesn't exist, create it.
-    if(child[hbit] == NULL) child[hbit] = new routing_table;
-    child[hbit]->set(addr << 1, mlen - 1, value);
+    routing->valid = 1;
+    routing->nhop = value;
   }
 
   // Get the routing rule matching the longest prefix.
@@ -314,18 +316,21 @@ public:
   //     @ret: next-hop address
   //     @thr: no_routing if no matching rule
   uint32_t get(uint32_t addr, uint32_t mlen = 32) const {
-    if(mlen == 0) {  // no more indexing bits
-      if(!valid) throw no_routing();
-      return nhop;
+    const routing_table *routing = this;
+    uint32_t found = routing->valid;
+    uint32_t value = routing->nhop;
+    while(mlen--) {
+      uint32_t hbit = addr >> 31;
+      addr <<= 1;
+      routing = routing->child[hbit];
+      if(routing == NULL) break;
+      if(routing->valid) {
+        found = routing->valid;
+        value = routing->nhop;
+      }
     }
-    uint32_t hbit = addr >> 31;
-    // If the child node doesn't exist, here is the longest match.
-    if(child[hbit] == NULL) return get(0, 0);
-    try {
-      return child[hbit]->get(addr << 1, mlen - 1);
-    } catch(const no_routing &) {
-      return get(0, 0);
-    }
+    if(!found) throw no_routing();
+    return value;
   }
 };
 
