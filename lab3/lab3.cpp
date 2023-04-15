@@ -285,7 +285,7 @@ private:
   uint32_t nhop;  // next-hop address
 
 public:
-  // Create an inactivated node.
+  // Create a node mapped to address 0.0.0.0.
   routing_table() {
     memset(child, 0, sizeof child);
     valid = 0;
@@ -297,17 +297,15 @@ public:
   //     mlen: mask length
   //     value: next-hop address
   void set(uint32_t addr, uint32_t mlen, uint32_t value) {
-    routing_table *routing = this;
-    while(mlen--) {
-      uint32_t hbit = addr >> 31;
-      addr <<= 1;
-      if(routing->child[hbit] == NULL) {
-        routing->child[hbit] = new routing_table;
-      }
-      routing = routing->child[hbit];
+    if(mlen == 0) {  // no more indexing bits
+      valid = 1;
+      nhop = value;
+      return;
     }
-    routing->valid = 1;
-    routing->nhop = value;
+    uint32_t hbit = addr >> 31;
+    // If the child node doesn't exist, create it.
+    if(child[hbit] == NULL) child[hbit] = new routing_table;
+    child[hbit]->set(addr << 1, mlen - 1, value);
   }
 
   // Get the routing rule matching the longest prefix.
@@ -316,21 +314,18 @@ public:
   //     @ret: next-hop address
   //     @thr: no_routing if no matching rule
   uint32_t get(uint32_t addr, uint32_t mlen = 32) const {
-    const routing_table *routing = this;
-    uint32_t found = routing->valid;
-    uint32_t value = routing->nhop;
-    while(mlen--) {
-      uint32_t hbit = addr >> 31;
-      addr <<= 1;
-      routing = routing->child[hbit];
-      if(routing == NULL) break;
-      if(routing->valid) {
-        found = routing->valid;
-        value = routing->nhop;
-      }
+    if(mlen == 0) {  // no more indexing bits
+      if(!valid) throw no_routing();
+      return nhop;
     }
-    if(!found) throw no_routing();
-    return value;
+    uint32_t hbit = addr >> 31;
+    // If the child node doesn't exist, here is the longest match.
+    if(child[hbit] == NULL) return get(0, 0);
+    try {
+      return child[hbit]->get(addr << 1, mlen - 1);
+    } catch(const no_routing &) {
+      return get(0, 0);
+    }
   }
 };
 
@@ -356,12 +351,6 @@ public:
 #define STUD_FORWARD_TEST_TTLERROR  1
 #define STUD_FORWARD_TEST_NOROUTE   1
 
-#else  /* __unix__ */
-
-#include "sysinclude.h"
-
-#endif  /* __unix__ */
-
 /*
  * 路由信息
  */
@@ -370,6 +359,12 @@ typedef struct stud_route_msg {
   unsigned int masklen;
   unsigned int nexthop;
 } stud_route_msg;
+
+#else  /* __unix__ */
+
+#include "sysinclude.h"
+
+#endif  /* __unix__ */
 
 /*
  * 系统函数：下放分组
@@ -417,13 +412,16 @@ void stud_Route_Init()
 /*
  * 接口函数：添加路由规则
  *
- * proute: 具体规则
+ * msg: 具体规则
  */
 void stud_route_add(stud_route_msg *msg)
 {
-  printf("*** %s: %#x/%u -> %#x",
-      __func__, msg->dest, msg->masklen, msg->nexthop);
-  routing.set(msg->dest, msg->masklen, msg->nexthop);
+  nint32 &addr = *(nint32 *)&msg->dest;
+  nint32 &mlen = *(nint32 *)&msg->masklen;
+  nint32 &nhop = *(nint32 *)&msg->nexthop;
+  printf("*** %s: %#x/%u -> %#x\n",
+      __func__, (uint32_t)addr, (uint32_t)mlen, (uint32_t)nhop);
+  routing.set(addr, mlen, nhop);
 }
 
 /*
@@ -441,7 +439,7 @@ int stud_fwd_deal(char *buf, int len)
 
   /* 判断是否需要本机接收 */
   if(addr == getIpv4Address()) {
-    printf("*** %s", "fwd_LocalRcv");
+    printf("*** %s: dst=%#x\n", "fwd_LocalRcv", addr);
     fwd_LocalRcv(buf, len);
     return 0;
   }
@@ -450,7 +448,7 @@ int stud_fwd_deal(char *buf, int len)
   try {
     nhop = routing.get(addr);
   } catch(const no_routing &) {
-    printf("*** %s: %d", "fwd_DiscardPkt", STUD_FORWARD_TEST_NOROUTE);
+    printf("*** %s: why=%d dst=%#x\n", "fwd_DiscardPkt", STUD_FORWARD_TEST_NOROUTE, addr);
     fwd_DiscardPkt(buf, STUD_FORWARD_TEST_NOROUTE);
     return 1;
   }
@@ -458,14 +456,15 @@ int stud_fwd_deal(char *buf, int len)
   /* 修改 TTL，归零则丢弃 */
   ttl = header->ttl() - 1;
   if(ttl == 0) {
-    printf("*** %s: %d", "fwd_DiscardPkt", STUD_FORWARD_TEST_TTLERROR);
+    printf("*** %s: why=%d ttl=0\n", "fwd_DiscardPkt", STUD_FORWARD_TEST_TTLERROR);
     fwd_DiscardPkt(buf, STUD_FORWARD_TEST_TTLERROR);
     return 1;
   }
   header->ttl(ttl);
+  header->update_hcs();
 
   /* 发送分组 */
-  printf("*** %s: %#x", "fwd_SendtoLower", nhop);
+  printf("*** %s: %#x -> %#x\n", "fwd_SendtoLower", (uint32_t)header->dst(), nhop);
   fwd_SendtoLower(buf, len, nhop);
   return 0;
 }

@@ -1,0 +1,38 @@
+begin test!, testItem = 2  testcase = 0
+accept len = 32 packet
+accept len = 244 packet
+accept len = 41 packet
+*** stud_route_add: 0xb000002/24 -> 0xb00000b
+*** stud_route_add: 0xc000003/24 -> 0xc00000c
+accept len = 55 packet
+send a message to main ui, len = 53  type = 2  subtype = 0
+*** fwd_LocalRcv: dst=0xa000003
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 2  testcase = 1
+accept len = 32 packet
+accept len = 244 packet
+accept len = 41 packet
+*** stud_route_add: 0xb000002/24 -> 0xb00000b
+*** stud_route_add: 0xc000003/24 -> 0xc00000c
+accept len = 38 packet
+send a message to main ui, len = 36  type = 2  subtype = 0
+*** fwd_DiscardPkt: why=8 dst=0x10000003
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 2  testcase = 2
+accept len = 32 packet
+accept len = 244 packet
+accept len = 41 packet
+*** stud_route_add: 0xb000003/24 -> 0xc00000d
+*** stud_route_add: 0xb000003/32 -> 0xc00000c
+accept len = 55 packet
+send a message to main ui, len = 53  type = 2  subtype = 0
+*** fwd_SendtoLower: 0xb000003 -> 0xc00000c
+send a message to main ui, len = 53  type = 2  subtype = 1
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+Test over!
