@@ -30,11 +30,10 @@
 #define UINT8   uint8_t
 #define UINT16  uint16_t
 #define UINT32  uint32_t
-#define UINT64  uint64_t
+
 #define INT8    int8_t
 #define INT16   int16_t
 #define INT32   int32_t
-#define INT64   int64_t
 
 /*
  * 丢弃报文的原因
@@ -43,19 +42,17 @@
 #define STUD_TCP_TEST_SRCPORT_ERROR  2
 #define STUD_TCP_TEST_DSTPORT_ERROR  3
 
-/*
- * 全局变量
- */
-int gSrcPort = 2005;
-int gDstPort = 2006;
-int gSeqNum = 0;
-int gAckNum = 0;
-
 #else  /* __unix__ */
 
 #include "sysinclude.h"
 
 #endif  /* __unix__ */
+
+/* 修正系统中错误的定义 */
+#undef  UINT64
+#undef  INT64
+#define UINT64  uint64_t
+#define INT64   int64_t
 
 /*
  * 参数配置
@@ -65,10 +62,10 @@ int gAckNum = 0;
 /*
  * 全局变量
  */
-extern int gSrcPort;
-extern int gDstPort;
-extern int gSeqNum;
-extern int gAckNum;
+int gSrcPort = 2007;
+int gDstPort = 2006;
+int gSeqNum = 0;
+int gAckNum = 0;
 
 /*
  * 系统函数
@@ -116,9 +113,9 @@ typedef struct tcphdr {
 /*
  * 获取 TCP 校验和
  */
-UINT16 tcp_cs(const tcphdr *hdr, UINT16 siz)
+UINT16 tcp_cs(const tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
 {
-  UINT64 cs = 0;
+  UINT64 cs = htonl(src) + htonl(dst) + htons(17) + htons(siz);
   size_t n = siz >> 2;
   UINT32 *p = (UINT32 *)hdr, rem = 0;
   asm("":::"memory");  // 在 strict aliasing 下充当内存屏障
@@ -216,8 +213,10 @@ void tcb_init(tcb *cb)
  */
 int tcp_send(tcphdr *hdr, UINT16 siz, UINT32 srcaddr, UINT32 dstaddr)
 {
+  printf("*** %s: siz=%hu srcaddr=%#x dstaddr=%#x\n", __func__, siz, srcaddr, dstaddr);
+
   hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, siz);
+  hdr->cs = tcp_cs(hdr, siz, srcaddr, dstaddr);
   tcp_sendIpPkt((unsigned char *)hdr, siz, srcaddr, dstaddr, 64);
   return 0;
 }
@@ -225,9 +224,9 @@ int tcp_send(tcphdr *hdr, UINT16 siz, UINT32 srcaddr, UINT32 dstaddr)
 /*
  * 接收 TCP 报文
  */
-int tcp_recv(tcphdr *hdr, UINT16 siz)
+int tcp_recv(tcphdr *hdr, UINT16 siz, UINT32 srcaddr, UINT32 dstaddr)
 {
-  if(tcp_cs(hdr, siz)) {
+  if(tcp_cs(hdr, siz, srcaddr, dstaddr)) {
     return 1;
   }
   return 0;
@@ -659,29 +658,33 @@ static void gtcb_init(void)
   gtcb.rcvlow = gAckNum;
 }
 
-int stud_tcp_input(char *buf, UINT32 siz, UINT32 src, UINT32 dst)
+int stud_tcp_input(char *buf, UINT16 siz, UINT32 src, UINT32 dst)
 {
+  printf("*** %s: siz=%hu src=%#x dst=%#x\n", __func__, siz, src, dst);
+
   tcphdr *hdr = (tcphdr *)buf;
 
   if(siz < sizeof *hdr) return 1;
   if(src != gtcb.dstaddr) return 1;
   if(dst != gtcb.srcaddr) return 1;
-  if(tcp_cs(hdr, siz)) return 1;
+  if(tcp_cs(hdr, siz, src, dst)) return 1;
 
   UINT16 srcport = ntohs(hdr->srcport);
   UINT16 dstport = ntohs(hdr->dstport);
   UINT32 seq = ntohl(hdr->seq);
 
-  // TODO tcp_sendReport
   if(srcport != gtcb.dstport) {
+    tcp_sendReport(STUD_TCP_TEST_SRCPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SRCPORT_ERROR);
     return 1;
   }
   if(dstport != gtcb.srcport) {
+    tcp_sendReport(STUD_TCP_TEST_DSTPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_DSTPORT_ERROR);
     return 1;
   }
   if(seq != gtcb.rcvlow) {
+    tcp_sendReport(STUD_TCP_TEST_SEQNO_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SEQNO_ERROR);
     return 1;
   }
@@ -689,18 +692,27 @@ int stud_tcp_input(char *buf, UINT32 siz, UINT32 src, UINT32 dst)
   return tcp_parse(&gtcb, hdr, siz);
 }
 
-void stud_tcp_output(char *data, UINT16 size, UINT8 flags,
+void stud_tcp_output(char *data, UINT16 size, unsigned char flags,
     UINT16 srcport, UINT16 dstport, UINT32 srcaddr, UINT32 dstaddr)
 {
+  printf("*** %s: size=%hu flags=%hhu srcport=%hu dstport=%hu srcaddr=%#x dstaddr=%#x\n",
+      __func__, size, flags, srcport, dstport, srcaddr, dstaddr);
+
+  printf("*** %s: srcport=%hu gtcb.srcport=%hu\n", __func__, srcport, gtcb.srcport);
   if(srcport != gtcb.srcport) return;
+  printf("*** %s: dstport=%hu gtcb.dstport=%hu\n", __func__, dstport, gtcb.dstport);
   if(dstport != gtcb.dstport) return;
-  if(srcaddr != gtcb.srcaddr) return;
-  if(dstaddr != gtcb.dstaddr) return;
+  gtcb.srcaddr = dstaddr;
+  printf("*** %s: srcaddr=%#x gtcb.srcaddr=%#x\n", __func__, srcaddr, gtcb.srcaddr);
+  gtcb.dstaddr = dstaddr;
+  printf("*** %s: dstaddr=%#x gtcb.dstaddr=%#x\n", __func__, dstaddr, gtcb.dstaddr);
 
   if((flags & TCP_SYN)) {
     if((flags & (TCP_ACK | TCP_FIN))) return;
+    printf("*** %s: SYN size=%hu\n", __func__, size);
     if(size) return;
-    tcp_connect(&gtcb);
+    int r = tcp_connect(&gtcb);
+    printf("*** %s: SYN ret=%d\n", __func__, r);
     return;
   }
 
@@ -729,6 +741,7 @@ int stud_tcp_socket(int domain, int type, int protocol)
   for(int i = 0; i < SOCKFD_MAX; ++i) {
     if(socktab[i] == NULL) {
       socktab[i] = (tcb *)malloc(sizeof *socktab[i]);
+      if(socktab[i] == NULL) return -1;
       tcb_init(socktab[i]);
       return i;
     }
@@ -766,18 +779,20 @@ int stud_tcp_connect(int sockfd, struct sockaddr_in *addr, int)
   UINT16 dstport = ntohs(hdr->dstport);
   UINT32 seq = ntohl(hdr->seq);
 
-  // TODO tcp_sendReport
   if(srcport != gtcb.dstport) {
+    tcp_sendReport(STUD_TCP_TEST_SRCPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SRCPORT_ERROR);
     free(buf);
     return 1;
   }
   if(dstport != gtcb.srcport) {
+    tcp_sendReport(STUD_TCP_TEST_DSTPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_DSTPORT_ERROR);
     free(buf);
     return 1;
   }
   if(seq != gtcb.rcvlow) {
+    tcp_sendReport(STUD_TCP_TEST_SEQNO_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SEQNO_ERROR);
     free(buf);
     return 1;
@@ -816,18 +831,20 @@ int stud_tcp_send(int sockfd,
   UINT16 dstport = ntohs(hdr->dstport);
   UINT32 seq = ntohl(hdr->seq);
 
-  // TODO tcp_sendReport
   if(srcport != gtcb.dstport) {
+    tcp_sendReport(STUD_TCP_TEST_SRCPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SRCPORT_ERROR);
     free(buf);
     return 1;
   }
   if(dstport != gtcb.srcport) {
+    tcp_sendReport(STUD_TCP_TEST_DSTPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_DSTPORT_ERROR);
     free(buf);
     return 1;
   }
   if(seq != gtcb.rcvlow) {
+    tcp_sendReport(STUD_TCP_TEST_SEQNO_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SEQNO_ERROR);
     free(buf);
     return 1;
@@ -865,18 +882,20 @@ int stud_tcp_recv(int sockfd,
   UINT16 dstport = ntohs(hdr->dstport);
   UINT32 seq = ntohl(hdr->seq);
 
-  // TODO tcp_sendReport
   if(srcport != gtcb.dstport) {
+    tcp_sendReport(STUD_TCP_TEST_SRCPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SRCPORT_ERROR);
     free(buf);
     return 1;
   }
   if(dstport != gtcb.srcport) {
+    tcp_sendReport(STUD_TCP_TEST_DSTPORT_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_DSTPORT_ERROR);
     free(buf);
     return 1;
   }
   if(seq != gtcb.rcvlow) {
+    tcp_sendReport(STUD_TCP_TEST_SEQNO_ERROR);
     tcp_DiscardPkt(buf, STUD_TCP_TEST_SEQNO_ERROR);
     free(buf);
     return 1;
@@ -925,22 +944,24 @@ int stud_tcp_close(int sockfd)
     UINT16 dstport = ntohs(hdr->dstport);
     UINT32 seq = ntohl(hdr->seq);
 
-    // TODO tcp_sendReport
-    if(srcport != gtcb.dstport) {
-      tcp_DiscardPkt(buf, STUD_TCP_TEST_SRCPORT_ERROR);
-      free(buf);
-      return 1;
-    }
-    if(dstport != gtcb.srcport) {
-      tcp_DiscardPkt(buf, STUD_TCP_TEST_DSTPORT_ERROR);
-      free(buf);
-      return 1;
-    }
-    if(seq != gtcb.rcvlow) {
-      tcp_DiscardPkt(buf, STUD_TCP_TEST_SEQNO_ERROR);
-      free(buf);
-      return 1;
-    }
+  if(srcport != gtcb.dstport) {
+    tcp_sendReport(STUD_TCP_TEST_SRCPORT_ERROR);
+    tcp_DiscardPkt(buf, STUD_TCP_TEST_SRCPORT_ERROR);
+    free(buf);
+    return 1;
+  }
+  if(dstport != gtcb.srcport) {
+    tcp_sendReport(STUD_TCP_TEST_DSTPORT_ERROR);
+    tcp_DiscardPkt(buf, STUD_TCP_TEST_DSTPORT_ERROR);
+    free(buf);
+    return 1;
+  }
+  if(seq != gtcb.rcvlow) {
+    tcp_sendReport(STUD_TCP_TEST_SEQNO_ERROR);
+    tcp_DiscardPkt(buf, STUD_TCP_TEST_SEQNO_ERROR);
+    free(buf);
+    return 1;
+  }
 
     r = tcp_parse(cb, hdr, siz);
     free(buf);
@@ -1000,9 +1021,6 @@ int main(void)
   hdr->seq = htonl(256);
   hdr->ack = htonl(1);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_SYN | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_ESTABLISHED);
 
@@ -1014,9 +1032,6 @@ int main(void)
   hdr->seq = htonl(257);
   hdr->ack = htonl(2);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_FIN | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_TIME_WAIT);
 
@@ -1038,9 +1053,6 @@ int main(void)
   hdr->seq = htonl(256);
   hdr->ack = htonl(1);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_SYN | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_ESTABLISHED);
 
@@ -1052,9 +1064,6 @@ int main(void)
   hdr->seq = htonl(257);
   hdr->ack = htonl(2);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_FIN_WAIT_2);
 
@@ -1062,9 +1071,6 @@ int main(void)
   hdr->seq = htonl(257);
   hdr->ack = htonl(2);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_FIN | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_TIME_WAIT);
 
@@ -1072,9 +1078,6 @@ int main(void)
   hdr->seq = htonl(257);
   hdr->ack = htonl(2);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_FIN | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_TIME_WAIT);
 
@@ -1096,9 +1099,6 @@ int main(void)
   hdr->seq = htonl(256);
   hdr->ack = htonl(1);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_SYN | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_ESTABLISHED);
 
@@ -1119,9 +1119,6 @@ int main(void)
   hdr->seq = htonl(257);
   hdr->ack = htonl(4097);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_ACK);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr);
-  assert(tcp_recv(hdr, sizeof *hdr) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
   assert(cb.stat == TCP_ESTABLISHED);
 
@@ -1129,33 +1126,50 @@ int main(void)
   hdr->ack = htonl(8193);
   hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_ACK);
   memset(hdr->op, 2, 4096);
-  hdr->cs = 0;
-  hdr->cs = tcp_cs(hdr, sizeof *hdr + 4096);
-  assert(tcp_recv(hdr, sizeof *hdr + 4096) == 0);
   assert(tcp_parse(&cb, hdr, sizeof *hdr + 4096) == 0);
   assert(cb.stat == TCP_ESTABLISHED);
 
+  /* ESTABLISHED -> FIN_WAIT_1 */
+  assert(tcp_close(&cb) == 0);
+  assert(cb.stat == TCP_FIN_WAIT_1);
+
+  /* FINACK -> TIME_WAIT */
+  hdr->seq = htonl(4353);
+  hdr->ack = htonl(8194);
+  hdr->flags = htons((ntohs(hdr->flags) & ~TCP_FLG) | TCP_FIN | TCP_ACK);
+  assert(tcp_parse(&cb, hdr, sizeof *hdr) == 0);
+  assert(cb.stat == TCP_TIME_WAIT);
+
+  /* timeout -> CLOSED */
+  tcp_timeout(&cb);
+  assert(cb.stat == TCP_CLOSED);
+
+  free(hdr);
   return 0;
 }
 
 /*
  * 本地空壳函数
  */
+__attribute__((noinline))
 void tcp_DiscardPkt(char *buf, int type)
 {
   assert(buf);
   assert(type >= STUD_TCP_TEST_SEQNO_ERROR);
   assert(type <= STUD_TCP_TEST_DSTPORT_ERROR);
 }
-void tcp_sendReport(int)
+__attribute__((noinline))
+void tcp_sendReport(int type)
 {
-
+  printf("*** %s: %d\n", __func__, type);
 }
+__attribute__((noinline))
 void tcp_sendIpPkt(unsigned char *data, UINT16 len, UINT32, UINT32, UINT8)
 {
   assert(data);
   assert(len >= sizeof(tcphdr));
 }
+__attribute__((noinline))
 int waitIpPacket(char *buf, int timeout)
 {
   assert(buf);
@@ -1163,10 +1177,12 @@ int waitIpPacket(char *buf, int timeout)
   memset(buf, -1, 65535);
   return -1;
 }
+__attribute__((noinline))
 UINT32 getIpv4Address()
 {
   return 0x7f000001;  // 127.0.0.1
 }
+__attribute__((noinline))
 UINT32 getServerIpv4Address()
 {
   return 0x7f000002;  // 127.0.0.1
