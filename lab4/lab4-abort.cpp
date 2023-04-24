@@ -30,10 +30,12 @@
 #define UINT8   uint8_t
 #define UINT16  uint16_t
 #define UINT32  uint32_t
+#define UINT64  uint64_t
 
 #define INT8    int8_t
 #define INT16   int16_t
 #define INT32   int32_t
+#define INT64   int64_t
 
 /*
  * 丢弃报文的原因
@@ -64,8 +66,8 @@
  */
 int gSrcPort = 2007;
 int gDstPort = 2006;
-int gSeqNum = 0;
-int gAckNum = 0;
+int gSeqNum = 0x10000;
+int gAckNum = 0x10000;
 
 /*
  * 系统函数
@@ -115,7 +117,7 @@ typedef struct tcphdr {
  */
 UINT16 tcp_cs(const tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
 {
-  UINT64 cs = htonl(src) + htonl(dst) + htons(17) + htons(siz);
+  UINT64 cs = htonl(src) + htonl(dst) + htons(6) + htons(siz);
   size_t n = siz >> 2;
   UINT32 *p = (UINT32 *)hdr, rem = 0;
   asm("":::"memory");  // 在 strict aliasing 下充当内存屏障
@@ -124,8 +126,6 @@ UINT16 tcp_cs(const tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
     ((char *)&rem)[(i - 1) & 3] = ((char *)hdr)[i - 1];
   }
   cs += rem;
-  cs = (cs & 0xffffffff) + (cs >> 32);
-  cs = (cs & 0xffffffff) + (cs >> 32);
   cs = (cs & 0xffff) + (cs >> 16);
   cs = (cs & 0xffff) + (cs >> 16);
   return ~cs;
@@ -243,6 +243,8 @@ void tcp_init(tcphdr *hdr, const tcb *cb, UINT16 thl,
   hdr->seq = htonl(cb->sndlow);
   hdr->ack = htonl(cb->rcvlow);
   hdr->flags = htons((flags & TCP_FLG) | TCP_ENC_THL(thl));
+  printf("*** %s: srcport=%hu dstport=%hu seq=%u ack=%u flags=%#x\n", __func__,
+      cb->srcport, cb->dstport, cb->sndlow, cb->rcvlow, flags & TCP_FLG);
   hdr->win = htons(1);
   hdr->cs = 0;
   hdr->up = htons(0);
@@ -340,7 +342,7 @@ int tcp_parse(tcb *cb, tcphdr *hdr, UINT16 siz)
       /* 发送 ACK 并进入 ESTABLISHED 状态 */
       cb->sndbuf->seq = htonl(cb->sndlow);
       cb->sndbuf->ack = htonl(cb->rcvlow);
-      cb->sndbuf->flags = htons((ntohs(cb->sndbuf->flags) & ~TCP_FLG) | TCP_ACK);
+      cb->sndbuf->flags = htons((ntohs(cb->sndbuf->flags) & ~TCP_FLG) | TCP_SYN | TCP_ACK);
       r = tcp_send(cb->sndbuf, cb->sndsiz, cb->srcaddr, cb->dstaddr);
       cb->stat = TCP_ESTABLISHED;
       if(r) {
@@ -376,7 +378,7 @@ int tcp_parse(tcb *cb, tcphdr *hdr, UINT16 siz)
       if(seq + 1 != cb->rcvbeg) return 1;  /* seq 号错 */
       if(ack != cb->sndbeg) return 1;  /* ack 号错 */
 
-      /* 重发 ACK */
+      /* 重发 SYNACK */
       tcp_init(hdr, cb, sizeof *hdr, NULL, 0, TCP_ACK);
       r = tcp_send(hdr, sizeof *hdr, cb->srcaddr, cb->dstaddr);
       if(r) return r;
@@ -652,9 +654,9 @@ static void gtcb_init(void)
   gtcb.dstaddr = getServerIpv4Address();
   gtcb.srcport = gSrcPort;
   gtcb.dstport = gDstPort;
-  gtcb.sndbeg = gSeqNum;
+  gtcb.sndbeg = gSeqNum + 1;
   gtcb.sndlow = gSeqNum;
-  gtcb.rcvbeg = gAckNum;
+  gtcb.rcvbeg = gAckNum + 1;
   gtcb.rcvlow = gAckNum;
 }
 
@@ -702,7 +704,7 @@ void stud_tcp_output(char *data, UINT16 size, unsigned char flags,
   if(srcport != gtcb.srcport) return;
   printf("*** %s: dstport=%hu gtcb.dstport=%hu\n", __func__, dstport, gtcb.dstport);
   if(dstport != gtcb.dstport) return;
-  gtcb.srcaddr = dstaddr;
+  gtcb.srcaddr = srcaddr;
   printf("*** %s: srcaddr=%#x gtcb.srcaddr=%#x\n", __func__, srcaddr, gtcb.srcaddr);
   gtcb.dstaddr = dstaddr;
   printf("*** %s: dstaddr=%#x gtcb.dstaddr=%#x\n", __func__, dstaddr, gtcb.dstaddr);
