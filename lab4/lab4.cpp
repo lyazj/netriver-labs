@@ -94,6 +94,17 @@ typedef struct tcphdr {
   UINT16 up;
   char op[0];
 } tcphdr;
+typedef struct tcphdr_pck {
+  UINT16 srcport;
+  UINT16 dstport;
+  UINT32 seq;
+  UINT32 ack;
+  UINT16 flags;
+  UINT16 win;
+  UINT16 cs;
+  UINT16 up;
+  char op[0];
+} __attribute__((packed)) tcphdr_pck;
 
 /*
  * TCP 标志掩码
@@ -180,6 +191,8 @@ typedef struct tcb {
   UINT32 sndsiz;          /* 窗口当前大小 */
   UINT32 sndseq;          /* 下一发送序列号 */
   tcplst sndlst;          /* 窗口外缓冲区链表 */
+  char *rcvbuf;           /* 接收数据缓冲区 */
+  UINT32 rcvlen;          /* 接收数据大小 */
 } tcb;
 
 /*
@@ -203,6 +216,8 @@ void tcb_init(tcb *cb)
   cb->sndlst.buf = NULL;
   cb->sndlst.siz = 0;
   cb->sndlst.prev = cb->sndlst.next = &cb->sndlst;
+  cb->rcvbuf = (char *)malloc(65535);
+  cb->rcvlen = 0;
 }
 
 /*
@@ -225,6 +240,9 @@ int tcp_recvdown(tcphdr **hdrp, char *buf, UINT16 siz, UINT32 src, UINT32 dst)
   printf("*** %s: siz=%hu src=%#x dst=%#x\n", __func__, siz, src, dst);
 
   if(siz < sizeof(tcphdr)) return 1;
+  UINT16 thl = TCP_DEC_THL(ntohs(((tcphdr_pck *)buf)->flags));
+  if(thl < sizeof(tcphdr)) return 1;
+  if(thl > siz) return 1;
   tcphdr *hdr = (tcphdr *)malloc(siz);  /* 确保满足对齐要求，需要释放 */
   if(hdr == NULL) return -1;
   memcpy(hdr, buf, siz);
@@ -384,7 +402,7 @@ int tcp_recvup(tcb *cb, char *data, UINT16 size, UINT16 flags,
     return 1;
   }
 
-  if((flags & TCP_ACK)) {  /* 发送确认报文 */
+  if((flags & TCP_ACK)) {  /* 发送确认报文或断开连接的第四次挥手 */
     if(cb->stat == TCP_ESTABLISHED
         || cb->stat == TCP_FIN_WAIT_1
         || cb->stat == TCP_FIN_WAIT_2
@@ -397,7 +415,7 @@ int tcp_recvup(tcb *cb, char *data, UINT16 size, UINT16 flags,
     return 1;
   }
 
-  return 1;  /* XXX */
+  return tcp_seqsend(cb, data, size, flags);  /* 停等发送数据 */
 }
 
 /*
@@ -411,7 +429,8 @@ int tcp_sendup(tcb *cb, tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
   UINT32 seq = ntohl(hdr->seq);
   UINT32 ack = ntohl(hdr->ack);
   UINT16 flags = ntohs(hdr->flags);
-  // UINT16 thl = TCP_DEC_THL(flags);
+  UINT16 thl = TCP_DEC_THL(flags);
+  UINT16 size = siz - thl;
   flags &= TCP_FLG;
 
   if(flags == (TCP_SYN | TCP_ACK)) {  /* 建立连接的第二次握手 */
@@ -430,7 +449,87 @@ int tcp_sendup(tcb *cb, tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
     return r;
   }
 
-  return 1;  /* XXX */
+  if((flags & TCP_SYN)) return 1;
+
+  if((flags & TCP_FIN)) {  /* 断开连接的第三次挥手 */
+    if(!(flags & TCP_ACK)) return 1;
+    if(cb->stat == TCP_FIN_WAIT_1) {
+      if(cb->rcvlow != seq) return 1;
+      if(cb->sndlow + 1 != ack) return 1;
+      cb->rcvlow = seq + 1;
+      cb->sndlow = ack;
+      free(cb->sndbuf);
+      cb->sndbuf = NULL;
+      cb->sndsiz = 0;
+      r = tcp_dirsend(cb, NULL, 0, TCP_ACK);
+      cb->stat = TCP_TIME_WAIT;
+      return r;
+    }
+    if(cb->stat == TCP_FIN_WAIT_2) {
+      if(cb->rcvlow != seq) return 1;
+      if(cb->sndlow + 1 != ack) return 1;
+      cb->rcvlow = seq + 1;
+      cb->sndlow = ack;
+      r = tcp_dirsend(cb, NULL, 0, TCP_ACK);
+      cb->stat = TCP_TIME_WAIT;
+      return r;
+    }
+    if(cb->stat == TCP_TIME_WAIT) {
+      if(cb->rcvlow != seq + 1) return 1;
+      if(cb->sndlow != ack) return 1;
+      return tcp_dirsend(cb, NULL, 0, TCP_ACK);
+    }
+    return 1;
+  }
+
+  if(cb->stat != TCP_ESTABLISHED
+      && cb->stat != TCP_FIN_WAIT_1
+      && cb->stat != TCP_FIN_WAIT_2)
+  {
+    return 1;
+  }
+
+  if(cb->rcvlow != seq) return 1;
+
+  /* 接收数据 */
+  memcpy(cb->rcvbuf, (char *)hdr + thl, size);
+  cb->rcvlen = size;
+  cb->rcvlow += size;
+
+  /* 处理确认 */
+  while((flags & TCP_ACK)) {
+    if(cb->sndbuf == NULL) break;
+
+    if(cb->stat == TCP_ESTABLISHED) {
+      UINT16 sndlen = cb->sndsiz - TCP_DEC_THL(ntohs(cb->sndbuf->flags));
+      /* 确认号不对应时，理解为单纯发送数据 */
+      if(cb->sndlow + sndlen != ack) break;
+      cb->sndlow = ack;
+      free(cb->sndbuf);
+      cb->sndbuf = NULL;
+      cb->sndsiz = 0;
+      break;
+    }
+
+    /* 停等实现下，不可能确认数据，只能确认 FIN */
+    if(cb->sndlow + 1 != ack) break;
+    /* 断开连接的第二次挥手 */
+    free(cb->sndbuf);
+    cb->sndbuf = NULL;
+    cb->sndsiz = 0;
+    cb->stat = TCP_FIN_WAIT_2;
+    break;
+  }
+
+  /* 单发确认，我端不使用捎带确认 */
+  if(size) r = tcp_dirsend(cb, NULL, 0, TCP_ACK);
+  if(r) return r;
+
+  /* 提交排队等待发送的作业 */
+  if(cb->sndbuf == NULL) r = tcp_submit(cb, 0);
+  if(r == -1) r = 0;  /* 无排队作业 */
+
+  return r;
 }
 
 /* 全局 TCB 控制块 */
@@ -451,6 +550,20 @@ static void gtcb_init(void)
   gtcb->rcvlow = gAckNum;
   gtcb->rcvbeg = gAckNum + 1;
   gtcb->sndseq = gSeqNum;
+}
+
+__attribute__((destructor))
+static void gtcb_fini(void)
+{
+  free(gtcb->sndbuf);
+  free(gtcb->rcvbuf);
+  for(tcplst *p = gtcb->sndlst.next, *q; p != &gtcb->sndlst; p = q) {
+    q = p->next;
+    free(p->buf);
+    free(p);
+  }
+  free(gtcb);
+  gtcb = NULL;
 }
 
 int stud_tcp_input(char *buf, UINT16 siz, UINT32 src, UINT32 dst)
@@ -475,31 +588,6 @@ void stud_tcp_output(char *data, UINT16 size, unsigned char flags,
   int r = tcp_recvup(gtcb, data, size, flags,
       srcport, dstport, srcaddr, dstaddr);
   printf("*** %s: ret=%d\n", __func__, r);
-}
-
-int stud_tcp_socket(int domain, int type, int protocol)
-{
-  return 2;
-}
-
-int stud_tcp_connect(int sockfd, struct sockaddr_in *addr, int addrlen)
-{
-  return 0;
-}
-
-int stud_tcp_send(int sockfd, const unsigned char *pData, unsigned short datalen, int flags)
-{
-  return 0;
-}
-
-int stud_tcp_recv(int sockfd, unsigned char *pData, unsigned short datalen, int flags)
-{
-  return 0;
-}
-
-int stud_tcp_close(int sockfd)
-{
-  return 0;
 }
 
 #if __cplusplus >= 201703  /* 我的笔记本/机房台式机编译环境 */
@@ -556,6 +644,33 @@ __attribute__((noinline))
 UINT32 getServerIpv4Address()
 {
   return 0x7f000002;  /* 127.0.0.2 */
+}
+
+#else  /* __cplusplus >= 201703 */
+
+int stud_tcp_socket(int domain, int type, int protocol)
+{
+  return 2;
+}
+
+int stud_tcp_connect(int sockfd, struct sockaddr_in *addr, int addrlen)
+{
+  return 0;
+}
+
+int stud_tcp_send(int sockfd, const unsigned char *pData, unsigned short datalen, int flags)
+{
+  return 0;
+}
+
+int stud_tcp_recv(int sockfd, unsigned char *pData, unsigned short datalen, int flags)
+{
+  return 0;
+}
+
+int stud_tcp_close(int sockfd)
+{
+  return 0;
 }
 
 #endif  /* __cplusplus >= 201703 */
