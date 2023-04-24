@@ -205,7 +205,7 @@ void tcb_init(tcb *cb)
   cb->srcport = cb->dstport = 0;
   cb->srcaddr = cb->dstaddr = 0;
 
-  /* 窗口缓冲区 */
+  /* 停等窗口 */
   cb->sndlow = cb->rcvlow = 0;
   cb->sndbeg = cb->rcvbeg = 1;
   cb->sndbuf = NULL;
@@ -216,6 +216,8 @@ void tcb_init(tcb *cb)
   cb->sndlst.buf = NULL;
   cb->sndlst.siz = 0;
   cb->sndlst.prev = cb->sndlst.next = &cb->sndlst;
+
+  /* 接收缓冲区 */
   cb->rcvbuf = (char *)malloc(65535);
   cb->rcvlen = 0;
 }
@@ -302,8 +304,8 @@ int tcp_pend(tcb *cb, const void *data, UINT16 size)
 int tcp_submit(tcb *cb, UINT16 flags)
 {
   tcplst *lst = cb->sndlst.next;
-  if(cb->sndbuf) return 1;
   if(lst == &cb->sndlst) return -1;
+  if(cb->sndbuf) return 1;
   flags &= TCP_FLG;
   if((flags & (TCP_SYN | TCP_FIN))) return 1;
   cb->sndbuf = lst->buf;
