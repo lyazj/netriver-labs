@@ -339,7 +339,7 @@ int tcp_parse(tcb *cb, tcphdr *hdr, UINT16 siz)
       cb->rcvlow = seq + 1;
       cb->rcvbeg = seq + 1;
 
-      /* 发送 ACK 并进入 ESTABLISHED 状态 */
+      /* 发送 SYNACK 并进入 ESTABLISHED 状态 */
       cb->sndbuf->seq = htonl(cb->sndlow);
       cb->sndbuf->ack = htonl(cb->rcvlow);
       cb->sndbuf->flags = htons((ntohs(cb->sndbuf->flags) & ~TCP_FLG) | TCP_SYN | TCP_ACK);
