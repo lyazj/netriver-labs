@@ -77,8 +77,8 @@ extern void tcp_sendReport(int type);
 extern void tcp_sendIpPkt(unsigned char *data, UINT16 len,
     UINT32 srcaddr, UINT32 dstaddr, UINT8 ttl);
 extern int waitIpPacket(char *buf, int timeout);
-extern unsigned int getIpv4Address(void);
-extern unsigned int getServerIpv4Address(void);
+extern UINT32 getIpv4Address(void);
+extern UINT32 getServerIpv4Address(void);
 
 /*
  * TCP 报头
@@ -131,7 +131,7 @@ UINT16 tcp_cs(const tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
   UINT64 cs = htonl(src) + htonl(dst) + htons(6) + htons(siz);
   size_t n = siz >> 2;
   UINT32 *p = (UINT32 *)hdr, rem = 0;
-  asm("":::"memory");  /* 在 strict aliasing 下充当内存屏障 */
+  asm("" ::: "memory");  /* 在 strict aliasing 下充当内存屏障 */
   for(size_t i = 0; i < n; ++i) cs += p[i];
   for(size_t i = siz; i & 3; --i) {
     ((char *)&rem)[(i - 1) & 3] = ((char *)hdr)[i - 1];
@@ -198,7 +198,7 @@ typedef struct tcb {
 /*
  * 初始化 TCB 控制块
  */
-void tcb_init(tcb *cb)
+int tcb_init(tcb *cb)
 {
   cb->stat = TCP_CLOSED;
   cb->mode = TCP_ACTIVE;
@@ -220,6 +220,20 @@ void tcb_init(tcb *cb)
   /* 接收缓冲区 */
   cb->rcvbuf = (char *)malloc(65535);
   cb->rcvlen = 0;
+
+  if(cb->rcvbuf == NULL) return 1;
+  return 0;
+}
+
+void tcb_destroy(tcb *cb)
+{
+  free(cb->sndbuf);
+  free(cb->rcvbuf);
+  for(tcplst *p = cb->sndlst.next, *q; p != &cb->sndlst; p = q) {
+    q = p->next;
+    free(p->buf);
+    free(p);
+  }
 }
 
 /*
@@ -237,12 +251,12 @@ void tcp_senddown(tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
 /*
  * 从下层接收 TCP 报文
  */
-int tcp_recvdown(tcphdr **hdrp, char *buf, UINT16 siz, UINT32 src, UINT32 dst)
+int tcp_recvdown(tcphdr **hdrp, const void *buf, UINT16 siz, UINT32 src, UINT32 dst)
 {
   printf("*** %s: siz=%hu src=%#x dst=%#x\n", __func__, siz, src, dst);
 
   if(siz < sizeof(tcphdr)) return 1;
-  UINT16 thl = TCP_DEC_THL(ntohs(((tcphdr_pck *)buf)->flags));
+  UINT16 thl = TCP_DEC_THL(ntohs(((const tcphdr_pck *)buf)->flags));
   if(thl < sizeof(tcphdr)) return 1;
   if(thl > siz) return 1;
   tcphdr *hdr = (tcphdr *)malloc(siz);  /* 确保满足对齐要求，需要释放 */
@@ -355,10 +369,9 @@ int tcp_dirsend(tcb *cb, const void *data, UINT16 size, UINT16 flags)
 /*
  * 从上层接收 TCP 数据或控制标志
  */
-int tcp_recvup(tcb *cb, char *data, UINT16 size, UINT16 flags,
+int tcp_recvup(tcb *cb, const void *data, UINT16 size, UINT16 flags,
     UINT16 srcport, UINT16 dstport, UINT32 srcaddr, UINT32 dstaddr)
 {
-  int r = 0;
   flags &= TCP_FLG;
   printf("*** %s: stat=%d size=%hu flags=%#hx"
       " srcport=%hu dstport=%hu srcaddr=%#x dstaddr=%#x\n",
@@ -371,48 +384,33 @@ int tcp_recvup(tcb *cb, char *data, UINT16 size, UINT16 flags,
     cb->dstport = dstport;
     cb->srcaddr = srcaddr;
     cb->dstaddr = dstaddr;
-    r = tcp_seqsend(cb, data, size, flags);
     cb->stat = TCP_SYN_SENT;
-    return r;
+    return tcp_seqsend(cb, data, size, flags);
   }
 
+  if((flags & TCP_SYN)) return 1;
   if(cb->stat == TCP_CLOSED) return 1;
   if(cb->srcport != srcport) return 1;
   if(cb->dstport != dstport) return 1;
   if(cb->srcaddr != srcaddr) return 1;
   if(cb->dstaddr != dstaddr) return 1;
 
-  if(flags == (TCP_SYN | TCP_ACK)) {  /* 建立连接的第三次握手 */
-    if(cb->stat == TCP_SYN_SENT) {
-      r = tcp_dirsend(cb, data, size, flags);
-      cb->stat = TCP_ESTABLISHED;
-      return r;
-    }
-    if(cb->stat == TCP_ESTABLISHED) {
-      return 1;  /* XXX */
-    }
-    return 1;
-  }
-
   if((flags & TCP_FIN)) {  /* 连接断开的第一次挥手 */
-    if((flags & TCP_SYN)) return 1;
     if(cb->stat == TCP_ESTABLISHED || cb->stat == TCP_FIN_WAIT_1) {
-      r = tcp_seqsend(cb, data, size, flags);
       cb->stat = TCP_FIN_WAIT_1;
-      return r;
+      return tcp_seqsend(cb, data, size, flags);
     }
     return 1;
   }
 
-  if((flags & TCP_ACK)) {  /* 发送确认报文或断开连接的第四次挥手 */
+  if((flags & TCP_ACK)) {  /* 单纯发送确认报文 */
     if(cb->stat == TCP_ESTABLISHED
         || cb->stat == TCP_FIN_WAIT_1
         || cb->stat == TCP_FIN_WAIT_2
         || cb->stat == TCP_TIME_WAIT)
     {
       if(size) return 1;
-      r = tcp_dirsend(cb, data, size, flags);
-      return r;
+      return tcp_dirsend(cb, data, size, flags);
     }
     return 1;
   }
@@ -446,9 +444,8 @@ int tcp_sendup(tcb *cb, tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
     free(cb->sndbuf);
     cb->sndbuf = NULL;
     cb->sndsiz = 0;
-    r = tcp_recvup(cb, NULL, 0, TCP_SYN | TCP_ACK,
-        cb->srcport, cb->dstport, cb->srcaddr, cb->dstaddr);
-    return r;
+    cb->stat = TCP_ESTABLISHED;
+    return tcp_dirsend(cb, NULL, 0, TCP_ACK);  /* 建立连接的第三次握手 */
   }
 
   if((flags & TCP_SYN)) return 1;
@@ -463,23 +460,21 @@ int tcp_sendup(tcb *cb, tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
       free(cb->sndbuf);
       cb->sndbuf = NULL;
       cb->sndsiz = 0;
-      r = tcp_dirsend(cb, NULL, 0, TCP_ACK);
       cb->stat = TCP_TIME_WAIT;
-      return r;
+      return tcp_dirsend(cb, NULL, 0, TCP_ACK);  /* 断开连接的第四次挥手 */
     }
     if(cb->stat == TCP_FIN_WAIT_2) {
       if(cb->rcvlow != seq) return 1;
       if(cb->sndlow + 1 != ack) return 1;
       cb->rcvlow = seq + 1;
       cb->sndlow = ack;
-      r = tcp_dirsend(cb, NULL, 0, TCP_ACK);
       cb->stat = TCP_TIME_WAIT;
-      return r;
+      return tcp_dirsend(cb, NULL, 0, TCP_ACK);  /* 断开连接的第四次挥手 */
     }
     if(cb->stat == TCP_TIME_WAIT) {
       if(cb->rcvlow != seq + 1) return 1;
       if(cb->sndlow != ack) return 1;
-      return tcp_dirsend(cb, NULL, 0, TCP_ACK);
+      return tcp_dirsend(cb, NULL, 0, TCP_ACK);  /* 断开连接的第四次挥手 */
     }
     return 1;
   }
@@ -542,7 +537,11 @@ static void gtcb_init(void)
 {
   gtcb = (tcb *)malloc(sizeof *gtcb);
   if(gtcb == NULL) abort();
-  tcb_init(gtcb);
+  if(tcb_init(gtcb)) {
+    free(gtcb);
+    gtcb = NULL;
+    abort();
+  }
   gtcb->srcport = gSrcPort;
   gtcb->dstport = gDstPort;
   gtcb->srcaddr = getIpv4Address();
@@ -557,13 +556,7 @@ static void gtcb_init(void)
 __attribute__((destructor))
 static void gtcb_fini(void)
 {
-  free(gtcb->sndbuf);
-  free(gtcb->rcvbuf);
-  for(tcplst *p = gtcb->sndlst.next, *q; p != &gtcb->sndlst; p = q) {
-    q = p->next;
-    free(p->buf);
-    free(p);
-  }
+  tcb_destroy(gtcb);
   free(gtcb);
   gtcb = NULL;
 }
@@ -590,6 +583,187 @@ void stud_tcp_output(char *data, UINT16 size, unsigned char flags,
   int r = tcp_recvup(gtcb, data, size, flags,
       srcport, dstport, srcaddr, dstaddr);
   printf("*** %s: ret=%d\n", __func__, r);
+}
+
+/* TCP 套接字表 */
+static tcb *tcpsock[SOCKFD_MAX];
+
+int stud_tcp_socket(int domain, int type, int protocol)
+{
+  if(domain != AF_INET) return -1;
+  if(type != SOCK_STREAM) return -1;
+  if(protocol != IPPROTO_TCP) return -1;
+
+  for(int i = 0; i < SOCKFD_MAX; ++i) {
+    if(tcpsock[i] == NULL) {
+      tcpsock[i] = (tcb *)malloc(sizeof(tcb));
+      if(tcpsock[i] == NULL) return -1;
+      if(tcb_init(tcpsock[i])) {
+        free(tcpsock[i]);
+        tcpsock[i] = NULL;
+        return -1;
+      }
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+int stud_tcp_connect(int sockfd, struct sockaddr_in *addr, int addrlen)
+{
+  if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
+    return -1;
+  }
+  if(addrlen < (int)sizeof(sockaddr_in)) return -1;
+  if(ntohs(addr->sin_family) != AF_INET) return -1;
+  tcb *cb = tcpsock[sockfd];
+  UINT16 srcport = gSrcPort;
+  UINT16 dstport = ntohs(addr->sin_port);
+  UINT32 srcaddr = getIpv4Address();
+  UINT32 dstaddr = ntohl(addr->sin_addr.s_addr);
+  UINT16 siz;
+  int r = 0;
+  char buf[65535];
+
+  /* 设置套接字地址并发送 SYN */
+  r = tcp_recvup(cb, NULL, 0, TCP_SYN, srcport, dstport, srcaddr, dstaddr);
+  if(r) return r;
+
+  /* 等待 SYNACK */
+  r = waitIpPacket(buf, 10);
+  if(r < 0) return r;
+  siz = r;
+  r = 0;
+
+  /* 处理 SYNACK 并返回 ACK */
+  tcphdr *hdr;
+  r = tcp_recvdown(&hdr, buf, siz, dstaddr, srcaddr);
+  if(r) return r;
+  r = tcp_sendup(cb, hdr, siz, dstaddr, srcaddr);
+  free(hdr);
+  return r;
+}
+
+int stud_tcp_send(int sockfd, const unsigned char *buf, UINT16 size, int flags)
+{
+  if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
+    return -1;
+  }
+  tcb *cb = tcpsock[sockfd];
+  UINT16 siz;
+  int r = 0;
+  char rcvbuf[65535];
+
+  /* 发送 TCP 报文 */
+  r = tcp_recvup(cb, buf, size, flags,
+      cb->srcport, cb->dstport, cb->srcaddr, cb->dstaddr);
+  if(r) return r;
+
+  /* 等待 ACK */
+  r = waitIpPacket(rcvbuf, 10);
+  if(r < 0) return r;
+  siz = r;
+  r = 0;
+
+  /* 处理 ACK */
+  tcphdr *hdr;
+  r = tcp_recvdown(&hdr, rcvbuf, siz, cb->dstaddr, cb->srcaddr);
+  if(r) return r;
+  r = tcp_sendup(cb, hdr, siz, cb->dstaddr, cb->srcaddr);
+  free(hdr);
+  return r;
+}
+
+int stud_tcp_recv(int sockfd, unsigned char *buf, UINT16 size, int flags)
+{
+  if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
+    return -1;
+  }
+  if(flags) return 1;
+  tcb *cb = tcpsock[sockfd];
+  UINT16 siz;
+  int r = 0;
+  char rcvbuf[65535];
+
+  /* 等待对方发送数据分组 */
+  r = waitIpPacket(rcvbuf, 10);
+  if(r < 0) return r;
+  siz = r;
+  r = 0;
+
+  /* 处理对方发送的数据分组并发送 ACK */
+  tcphdr *hdr;
+  r = tcp_recvdown(&hdr, rcvbuf, siz, cb->dstaddr, cb->srcaddr);
+  if(r) return r;
+  cb->rcvlen = 0;
+  r = tcp_sendup(cb, hdr, siz, cb->dstaddr, cb->srcaddr);
+  if(r) {
+    free(hdr);
+    return r;
+  }
+
+  /* 拷贝接收到的数据 */
+  if(size > cb->rcvlen) size = cb->rcvlen;
+  memcpy(buf, cb->rcvbuf, size);
+  free(hdr);
+  return 0;
+}
+
+int stud_tcp_close(int sockfd)
+{
+  if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
+    return -1;
+  }
+  tcb *cb = tcpsock[sockfd];
+  UINT16 siz;
+  int r = 0;
+  char rcvbuf[65535];
+
+  if(cb->stat == TCP_SYN_SENT) {
+    tcb_destroy(cb);
+    free(cb);
+    tcpsock[sockfd] = NULL;
+    return 0;
+  }
+
+  if(cb->stat == TCP_ESTABLISHED) {
+
+    /* 发送 FIN */
+    r = tcp_recvup(cb, NULL, 0, TCP_SYN,
+        cb->srcport, cb->dstport, cb->srcaddr, cb->dstaddr);
+    if(r) return r;
+
+    while(cb->stat != TCP_TIME_WAIT) {
+      /* 等待对方分组 */
+      r = waitIpPacket(rcvbuf, 10);
+      if(r < 0) return r;
+      siz = r;
+      r = 0;
+
+      /* 处理对方分组并改变状态 */
+      tcphdr *hdr;
+      r = tcp_recvdown(&hdr, rcvbuf, siz, cb->dstaddr, cb->srcaddr);
+      if(r) return r;
+      r = tcp_sendup(cb, hdr, siz, cb->dstaddr, cb->srcaddr);
+      if(r) {
+        free(hdr);
+        return r;
+      }
+    }
+
+    /* 等待一段时间后释放连接 */
+    for(int t = 0; t < 10000000; ++t) {
+      asm volatile("movl\t%1, %0" : "+g"(t));  /* 防止循环被优化 */
+    }
+    tcb_destroy(cb);
+    free(cb);
+    tcpsock[sockfd] = NULL;
+    return 0;
+
+  }
+
+  return 1;
 }
 
 #if __cplusplus >= 201703  /* 我的笔记本/机房台式机编译环境 */
@@ -635,7 +809,8 @@ int waitIpPacket(char *buf, int timeout)
 {
   assert(buf);
   assert(timeout);
-  return -1;
+  memset(buf, -1, 16);
+  return 16;
 }
 __attribute__((noinline))
 UINT32 getIpv4Address()
@@ -650,29 +825,6 @@ UINT32 getServerIpv4Address()
 
 #else  /* __cplusplus >= 201703 */
 
-int stud_tcp_socket(int domain, int type, int protocol)
-{
-  return 2;
-}
-
-int stud_tcp_connect(int sockfd, struct sockaddr_in *addr, int addrlen)
-{
-  return 0;
-}
-
-int stud_tcp_send(int sockfd, const unsigned char *pData, unsigned short datalen, int flags)
-{
-  return 0;
-}
-
-int stud_tcp_recv(int sockfd, unsigned char *pData, unsigned short datalen, int flags)
-{
-  return 0;
-}
-
-int stud_tcp_close(int sockfd)
-{
-  return 0;
-}
+/* 所有所需函数均已实现 */
 
 #endif  /* __cplusplus >= 201703 */
