@@ -59,7 +59,9 @@
 /*
  * 参数配置
  */
-#define SOCKFD_MAX  256
+#define SOCKFD_MAX    256
+#define SOCKPORT_MIN  40000
+#define SOCKPORT_MAX  (SOCKPORT_MIN + SOCKFD_MAX)
 
 /*
  * 全局变量
@@ -206,11 +208,13 @@ int tcb_init(tcb *cb)
   cb->srcaddr = cb->dstaddr = 0;
 
   /* 停等窗口 */
-  cb->sndlow = cb->rcvlow = 0;
-  cb->sndbeg = cb->rcvbeg = 1;
+  cb->sndlow = 100;
+  cb->sndbeg = 101;
+  cb->rcvlow = 0;
+  cb->rcvbeg = 1;
   cb->sndbuf = NULL;
   cb->sndsiz = 0;
-  cb->sndseq = 0;
+  cb->sndseq = 100;
 
   /* 窗口外缓冲区链表 */
   cb->sndlst.buf = NULL;
@@ -294,8 +298,9 @@ void tcp_init(tcphdr *hdr, tcb *cb, UINT16 thl,
 /*
  * 将待发送的报文入队
  */
-int tcp_pend(tcb *cb, const void *data, UINT16 size)
+int tcp_pend(tcb *cb, const void *data, UINT16 size, UINT16 flags)
 {
+  if((flags & (TCP_SYN | TCP_FIN))) return 1;
   tcphdr *hdr = (tcphdr *)malloc(sizeof *hdr + size);
   if(hdr == NULL) return -1;
   tcplst *lst = (tcplst *)malloc(sizeof *lst);
@@ -303,7 +308,7 @@ int tcp_pend(tcb *cb, const void *data, UINT16 size)
     free(hdr);
     return -1;
   }
-  tcp_init(hdr, cb, sizeof *hdr, data, size, 0);
+  tcp_init(hdr, cb, sizeof *hdr, data, size, flags);
   lst->buf = hdr;
   lst->siz = sizeof *hdr + size;
   lst->prev = cb->sndlst.prev;
@@ -338,10 +343,7 @@ int tcp_submit(tcb *cb, UINT16 flags)
  */
 int tcp_seqsend(tcb *cb, const void *data, UINT16 size, UINT16 flags)
 {
-  if(cb->sndbuf) {
-    if(flags) return 1;
-    return tcp_pend(cb, data, size);
-  }
+  if(cb->sndbuf) return tcp_pend(cb, data, size, flags);
   tcphdr *hdr = (tcphdr *)malloc(sizeof *hdr + size);
   if(hdr == NULL) return -1;
   tcp_init(hdr, cb, sizeof *hdr, data, size, flags);
@@ -385,7 +387,9 @@ int tcp_recvup(tcb *cb, const void *data, UINT16 size, UINT16 flags,
     cb->srcaddr = srcaddr;
     cb->dstaddr = dstaddr;
     cb->stat = TCP_SYN_SENT;
-    return tcp_seqsend(cb, data, size, flags);
+    int r = tcp_seqsend(cb, data, size, flags);
+    cb->sndseq = cb->sndlow + 1;
+    return r;
   }
 
   if((flags & TCP_SYN)) return 1;
@@ -398,23 +402,15 @@ int tcp_recvup(tcb *cb, const void *data, UINT16 size, UINT16 flags,
   if((flags & TCP_FIN)) {  /* 连接断开的第一次挥手 */
     if(cb->stat == TCP_ESTABLISHED || cb->stat == TCP_FIN_WAIT_1) {
       cb->stat = TCP_FIN_WAIT_1;
-      return tcp_seqsend(cb, data, size, flags);
+      cb->sndseq = cb->sndlow;
+      int r = tcp_seqsend(cb, data, size, flags);
+      cb->sndseq = cb->sndlow + 1;
+      return r;
     }
     return 1;
   }
 
-  if((flags & TCP_ACK)) {  /* 单纯发送确认报文 */
-    if(cb->stat == TCP_ESTABLISHED
-        || cb->stat == TCP_FIN_WAIT_1
-        || cb->stat == TCP_FIN_WAIT_2
-        || cb->stat == TCP_TIME_WAIT)
-    {
-      if(size) return 1;
-      return tcp_dirsend(cb, data, size, flags);
-    }
-    return 1;
-  }
-
+  if(cb->stat != TCP_ESTABLISHED) return 1;
   return tcp_seqsend(cb, data, size, flags);  /* 停等发送数据 */
 }
 
@@ -438,7 +434,6 @@ int tcp_sendup(tcb *cb, tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
     if(ack != cb->sndlow + 1) return 1;
     cb->sndlow = ack;
     cb->sndbeg = ack;
-    cb->sndseq = ack;
     cb->rcvlow = seq + 1;
     cb->rcvbeg = seq + 1;
     free(cb->sndbuf);
@@ -590,11 +585,13 @@ static tcb *tcpsock[SOCKFD_MAX];
 
 int stud_tcp_socket(int domain, int type, int protocol)
 {
+  printf("*** %s: domain=%d type=%d protocol=%d\n", __func__, domain, type, protocol);
+
   if(domain != AF_INET) return -1;
   if(type != SOCK_STREAM) return -1;
   if(protocol != IPPROTO_TCP) return -1;
 
-  for(int i = 0; i < SOCKFD_MAX; ++i) {
+  for(int i = 2; i < SOCKFD_MAX; ++i) {
     if(tcpsock[i] == NULL) {
       tcpsock[i] = (tcb *)malloc(sizeof(tcb));
       if(tcpsock[i] == NULL) return -1;
@@ -603,6 +600,10 @@ int stud_tcp_socket(int domain, int type, int protocol)
         tcpsock[i] = NULL;
         return -1;
       }
+      tcpsock[i]->srcaddr = getIpv4Address();
+      tcpsock[i]->srcport = SOCKPORT_MIN + i;
+      printf("*** %s: ret=%d srcaddr=%#x srcport=%d\n",
+          __func__, i, tcpsock[i]->srcaddr, tcpsock[i]->srcport);
       return i;
     }
   }
@@ -612,19 +613,24 @@ int stud_tcp_socket(int domain, int type, int protocol)
 
 int stud_tcp_connect(int sockfd, struct sockaddr_in *addr, int addrlen)
 {
+  printf("*** %s: sockfd=%d addrlen=%d\n", __func__, sockfd, addrlen);
   if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
     return -1;
   }
   if(addrlen < (int)sizeof(sockaddr_in)) return -1;
-  if(ntohs(addr->sin_family) != AF_INET) return -1;
+
   tcb *cb = tcpsock[sockfd];
-  UINT16 srcport = gSrcPort;
+  UINT16 srcport = cb->srcport;
   UINT16 dstport = ntohs(addr->sin_port);
-  UINT32 srcaddr = getIpv4Address();
+  UINT32 srcaddr = cb->srcaddr;
   UINT32 dstaddr = ntohl(addr->sin_addr.s_addr);
   UINT16 siz;
   int r = 0;
   char buf[65535];
+
+  printf("*** %s: sin_family=%hu dstaddr=%#x dstport=%hu\n",
+      __func__, addr->sin_family, dstaddr, dstport);
+  if(addr->sin_family != AF_INET) return -1;
 
   /* 设置套接字地址并发送 SYN */
   r = tcp_recvup(cb, NULL, 0, TCP_SYN, srcport, dstport, srcaddr, dstaddr);
@@ -642,11 +648,13 @@ int stud_tcp_connect(int sockfd, struct sockaddr_in *addr, int addrlen)
   if(r) return r;
   r = tcp_sendup(cb, hdr, siz, dstaddr, srcaddr);
   free(hdr);
+  if(r == 0) printf("*** %s: success\n", __func__);
   return r;
 }
 
 int stud_tcp_send(int sockfd, const unsigned char *buf, UINT16 size, int flags)
 {
+  printf("*** %s: sockfd=%d size=%hu flags=%#x\n", __func__, sockfd, size, flags);
   if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
     return -1;
   }
@@ -677,10 +685,10 @@ int stud_tcp_send(int sockfd, const unsigned char *buf, UINT16 size, int flags)
 
 int stud_tcp_recv(int sockfd, unsigned char *buf, UINT16 size, int flags)
 {
+  printf("*** %s: sockfd=%d size=%hu flags=%#x\n", __func__, sockfd, size, flags);
   if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
     return -1;
   }
-  if(flags) return 1;
   tcb *cb = tcpsock[sockfd];
   UINT16 siz;
   int r = 0;
@@ -712,6 +720,7 @@ int stud_tcp_recv(int sockfd, unsigned char *buf, UINT16 size, int flags)
 
 int stud_tcp_close(int sockfd)
 {
+  printf("*** %s: sockfd=%d\n", __func__, sockfd);
   if(sockfd < 0 || sockfd >= SOCKFD_MAX || tcpsock[sockfd] == NULL) {
     return -1;
   }
@@ -729,8 +738,8 @@ int stud_tcp_close(int sockfd)
 
   if(cb->stat == TCP_ESTABLISHED) {
 
-    /* 发送 FIN */
-    r = tcp_recvup(cb, NULL, 0, TCP_SYN,
+    /* 发送 FINACK */
+    r = tcp_recvup(cb, NULL, 0, TCP_FIN | TCP_ACK,
         cb->srcport, cb->dstport, cb->srcaddr, cb->dstaddr);
     if(r) return r;
 
@@ -754,7 +763,7 @@ int stud_tcp_close(int sockfd)
 
     /* 等待一段时间后释放连接 */
     for(int t = 0; t < 10000000; ++t) {
-      asm volatile("movl\t%1, %0" : "+g"(t));  /* 防止循环被优化 */
+      asm volatile("movl\t%1, %0" : "+r"(t));  /* 防止循环被优化 */
     }
     tcb_destroy(cb);
     free(cb);

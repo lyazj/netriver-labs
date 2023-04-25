@@ -1,0 +1,154 @@
+begin test!, testItem = 6  testcase = 0
+accept len = 32 packet
+accept len = 478 packet
+*** stud_tcp_output: size=0 flags=0x2 srcport=2007 dstport=2006 srcaddr=0xa00000
+3 dstaddr=0xa000001
+*** tcp_recvup: stat=0 size=0 flags=0x2 srcport=2007 dstport=2006 srcaddr=0xa000
+003 dstaddr=0xa000001
+*** tcp_init: srcport=2007 dstport=2006 seq=65536 ack=65536 flags=0x2
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_output: ret=0
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** stud_tcp_input: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=2 siz=20 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=2007 dstport=2006 seq=65537 ack=2 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_output: size=0 flags=0x11 srcport=2007 dstport=2006 srcaddr=0xa0000
+03 dstaddr=0xa000001
+*** tcp_recvup: stat=4 size=0 flags=0x11 srcport=2007 dstport=2006 srcaddr=0xa00
+0003 dstaddr=0xa000001
+*** tcp_init: srcport=2007 dstport=2006 seq=65537 ack=2 flags=0x11
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_output: ret=0
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** stud_tcp_input: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=5 siz=20 src=0xa000001 dst=0xa000003
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** stud_tcp_input: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=7 siz=20 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=2007 dstport=2006 seq=65538 ack=3 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+begin test!, testItem = 6  testcase = 1
+accept len = 32 packet
+accept len = 884 packet
+*** stud_tcp_socket: domain=2 type=1 protocol=6
+*** stud_tcp_socket: ret=2 srcaddr=0xa000003 srcport=40002
+*** stud_tcp_connect: sockfd=2 addrlen=16
+*** stud_tcp_connect: sin_family=2 dstaddr=0xa000001 dstport=7000
+*** tcp_recvup: stat=0 size=0 flags=0x2 srcport=40002 dstport=7000 srcaddr=0xa00
+0003 dstaddr=0xa000001
+*** tcp_init: srcport=40002 dstport=7000 seq=100 ack=0 flags=0x2
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=2 siz=20 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=40002 dstport=7000 seq=101 ack=2 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_connect: success
+*** stud_tcp_socket: domain=2 type=1 protocol=6
+*** stud_tcp_socket: ret=3 srcaddr=0xa000003 srcport=40003
+*** stud_tcp_connect: sockfd=3 addrlen=16
+*** stud_tcp_connect: sin_family=2 dstaddr=0xa000001 dstport=6000
+*** tcp_recvup: stat=0 size=0 flags=0x2 srcport=40003 dstport=6000 srcaddr=0xa00
+0003 dstaddr=0xa000001
+*** tcp_init: srcport=40003 dstport=6000 seq=100 ack=0 flags=0x2
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=2 siz=20 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=40003 dstport=6000 seq=101 ack=2 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_connect: success
+*** stud_tcp_send: sockfd=3 size=4 flags=0x10
+*** tcp_recvup: stat=4 size=4 flags=0x10 srcport=40003 dstport=6000 srcaddr=0xa0
+00003 dstaddr=0xa000001
+*** tcp_init: srcport=40003 dstport=6000 seq=101 ack=2 flags=0x10
+*** tcp_senddown: siz=24 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 60  type = 2  subtype = 1
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=4 siz=20 src=0xa000001 dst=0xa000003
+*** stud_tcp_send: sockfd=2 size=4 flags=0x10
+*** tcp_recvup: stat=4 size=4 flags=0x10 srcport=40002 dstport=7000 srcaddr=0xa0
+00003 dstaddr=0xa000001
+*** tcp_init: srcport=40002 dstport=7000 seq=101 ack=2 flags=0x10
+*** tcp_senddown: siz=24 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 60  type = 2  subtype = 1
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=4 siz=20 src=0xa000001 dst=0xa000003
+*** stud_tcp_recv: sockfd=2 size=1000 flags=0x4
+accept len = 62 packet
+send a message to main ui, len = 60  type = 2  subtype = 0
+*** tcp_recvdown: siz=24 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=4 siz=24 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=40002 dstport=7000 seq=105 ack=6 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_recv: sockfd=3 size=1000 flags=0x4
+accept len = 62 packet
+send a message to main ui, len = 60  type = 2  subtype = 0
+*** tcp_recvdown: siz=24 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=4 siz=24 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=40003 dstport=6000 seq=105 ack=6 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_close: sockfd=3
+*** tcp_recvup: stat=4 size=0 flags=0x11 srcport=40003 dstport=6000 srcaddr=0xa0
+00003 dstaddr=0xa000001
+*** tcp_init: srcport=40003 dstport=6000 seq=105 ack=6 flags=0x11
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=5 siz=20 src=0xa000001 dst=0xa000003
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=7 siz=20 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=40003 dstport=6000 seq=106 ack=7 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+*** stud_tcp_close: sockfd=2
+*** tcp_recvup: stat=4 size=0 flags=0x11 srcport=40002 dstport=7000 srcaddr=0xa0
+00003 dstaddr=0xa000001
+*** tcp_init: srcport=40002 dstport=7000 seq=105 ack=6 flags=0x11
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=5 siz=20 src=0xa000001 dst=0xa000003
+accept len = 58 packet
+send a message to main ui, len = 56  type = 2  subtype = 0
+*** tcp_recvdown: siz=20 src=0xa000001 dst=0xa000003
+*** tcp_sendup: stat=7 siz=20 src=0xa000001 dst=0xa000003
+*** tcp_init: srcport=40002 dstport=7000 seq=106 ack=7 flags=0x10
+*** tcp_senddown: siz=20 src=0xa000003 dst=0xa000001
+send a message to main ui, len = 56  type = 2  subtype = 1
+accept len = 6 packet
+result = 0
+send a message to main ui, len = 6  type = 1  subtype = 7
+Test over!
