@@ -66,6 +66,7 @@ UINT16 tcp_cs(const tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
   cs += rem;
   cs = (cs & 0xffff) + (cs >> 16);
   cs = (cs & 0xffff) + (cs >> 16);
+  cs = (cs & 0xffff) + (cs >> 16);
   return ~cs;
 }
 
@@ -114,6 +115,7 @@ int main(void)
   for(int i = 0; i < n; ++i) {
     cs += ntohs(p[i]);
   }
+  cs = (cs & 0xffff) + (cs >> 16);
   cs = (cs & 0xffff) + (cs >> 16);
   cs = (cs & 0xffff) + (cs >> 16);
   cs = ~htons(cs);
