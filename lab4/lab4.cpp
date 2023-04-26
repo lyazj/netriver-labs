@@ -300,6 +300,7 @@ void tcp_init(tcphdr *hdr, tcb *cb, UINT16 thl,
  */
 int tcp_pend(tcb *cb, const void *data, UINT16 size, UINT16 flags)
 {
+  flags &= TCP_FLG;
   if((flags & (TCP_SYN | TCP_FIN))) return 1;
   tcphdr *hdr = (tcphdr *)malloc(sizeof *hdr + size);
   if(hdr == NULL) return -1;
@@ -358,11 +359,15 @@ int tcp_seqsend(tcb *cb, const void *data, UINT16 size, UINT16 flags)
  */
 int tcp_dirsend(tcb *cb, const void *data, UINT16 size, UINT16 flags)
 {
+  if(size) return 1;
   if(!(flags & TCP_ACK)) return 1;
-  if((flags & TCP_FIN)) return 1;
+  if((flags & (TCP_SYN | TCP_FIN))) return 1;
   tcphdr *hdr = (tcphdr *)malloc(sizeof *hdr + size);
   if(hdr == NULL) return -1;
   tcp_init(hdr, cb, sizeof *hdr, data, size, flags);
+  if(cb->sndlst.next != &cb->sndlst) {
+    hdr->seq = cb->sndlst.next->buf->seq;
+  }
   tcp_senddown(hdr, sizeof *hdr + size, cb->srcaddr, cb->dstaddr);
   free(hdr);
   return 0;
@@ -513,14 +518,15 @@ int tcp_sendup(tcb *cb, tcphdr *hdr, UINT16 siz, UINT32 src, UINT32 dst)
     break;
   }
 
-  /* 单发确认，我端不使用捎带确认 */
+  /* 如果可以发送新数据报文，则在需要时捎带确认 */
+  if(cb->sndbuf == NULL) {
+    r = tcp_submit(cb, size ? TCP_ACK : 0);
+    if(r >= 0) return r;
+    r = 0;
+  }
+
+  /* 不能发送新数据报文或没有新数据报文，则在需要时单发确认 */
   if(size) r = tcp_dirsend(cb, NULL, 0, TCP_ACK);
-  if(r) return r;
-
-  /* 提交排队等待发送的作业 */
-  if(cb->sndbuf == NULL) r = tcp_submit(cb, 0);
-  if(r == -1) r = 0;  /* 无排队作业 */
-
   return r;
 }
 
